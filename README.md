@@ -53,6 +53,8 @@ python imitate.py --config-path=config/CONFIG_DIRECTORY --config-name=CONFIG_FIL
 ### Usage examples
 We provide a pipeline that tests the implementation with randomly generated data, helping individuals understand the process and required data format.
 
+Before proceeding with the pipeline below, make sure that your SSD has at least 1GB of free memory.
+
 First, create and preprocess synthetic data. Four datasets (*test_single_robot*, *test_single_robot_gripper*, *test_dual_robot*, *test_dual_robot_gripper*) will be generated under `data` and `processed_data`.
 ```
 bash make_fake_data.sh

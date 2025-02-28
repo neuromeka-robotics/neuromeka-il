@@ -1,0 +1,84 @@
+### Base configuration
+base:
+  policy_class: act
+  task_name: test_single_robot
+  seed: 0
+  num_workers: 4
+  logging: False  # [Option] Can enable wandb logging
+
+  # # [Option] Can load pretrained policy
+  # pretrained_ckpt_dir: /PATH/TO/NEUROMEKA-IL/weights/test_single_robot/XXXX-XX-XX-XX-XX-XX
+
+### Train configuration
+train:
+  num_epochs: 1000
+  batch_size: 8
+  lr: 1e-5
+  lr_backbone: 1e-5
+  weight_decay: 1e-4
+
+### ACT configuration
+policy: 
+  ## robot / control mode
+  robot_mode: single_robot
+  control_mode: relative_delta_task_space
+
+  ## inference
+  temporal_ensemble_momentum: null
+  n_action_steps: 10  # 0.5 s
+
+  ## input, output structure
+  n_obs_steps: 1
+  chunk_size: 20  # 1s
+
+  input_shapes: 
+    observation.images.top: [3, 224, 224]
+    observation.qpos: [6] 
+    observation.qvel: [6]
+
+  output_shapes:
+    action.relative_delta.end_pos: [3]
+    action.relative_delta.end_ori: [6]
+    is_pad: [1]
+
+  action_dim: 9
+  
+  ## normalization/Unnormalization
+  input_normalization_modes: 
+    observation.images.top: mean_std
+    observation.qpos: mean_std
+    observation.qvel: mean_std
+
+  output_normalization_modes: 
+    action.relative_delta.end_pos: mean_std
+
+  ## Architecture
+  # vision backbone
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+  replace_final_stride_with_dilation: False
+  # transformer layer
+  pre_norm: False
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: relu
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+
+  # VAE
+  use_vae: True
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+
+  # Success detector
+  use_success_detector: True  # [Option] Can train success detector concurrently
+
+  ## Training and loss computation
+  dropout: 0.1
+  kl_weight: 10.0
+
+# # [Option] Can set image crop
+# extra:
+#   image_crop:
+#     observation.images.top: [[250, 450], [180, 450]]

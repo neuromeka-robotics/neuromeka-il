@@ -1,9 +1,3 @@
-"""
-Pre-process raw data in the format suitable for training.
-
-Follow TODO 1~3 to add new types of data.
-"""
-
 import os
 import shutil
 import numpy as np
@@ -13,6 +7,11 @@ from tqdm import tqdm
 
 from helper.utils import check_dir, MathFunc
 
+"""
+Pre-process raw data in the format suitable for training.
+
+Follow TODO 1~3 to add new types of data.
+"""
 
 class DataProcessor:
     def __init__(self, **kwargs):
@@ -77,7 +76,9 @@ class DataProcessor:
             end_angVel[robot_id] = MathFunc.degree_to_rad(getattr(self, f"pdot_{robot_id}")[:, 3:])
             
             if f"trigger_value_{robot_id}" in self.__dict__:
-                trigger_value[robot_id] = getattr(self, f"trigger_value_{robot_id}")[..., np.newaxis]
+                trigger_value[robot_id] = getattr(self, f"trigger_value_{robot_id}")
+                if len(trigger_value[robot_id].shape) == 1:
+                    trigger_value[robot_id] = trigger_value[robot_id][..., np.newaxis]  # If the shape is (T,), convert to (T, 1)
                 prev_trigger_value[robot_id] = np.roll(trigger_value[robot_id], 1, axis=0)
                 prev_trigger_value[robot_id][0] = 0 if trigger_value[robot_id][0] == 0 else 1
             else:

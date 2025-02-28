@@ -130,7 +130,6 @@ class Normalize(nn.Module):
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
-    # TODO(rcadene): should we remove torch.no_grad?
     @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         if self.modes is None:
@@ -198,7 +197,6 @@ class Unnormalize(nn.Module):
         for key, buffer in stats_buffers.items():
             setattr(self, "buffer_" + key.replace(".", "_"), buffer)
 
-    # TODO(rcadene): should we remove torch.no_grad?
     @torch.no_grad
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         if self.modes is None:

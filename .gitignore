@@ -5,6 +5,5 @@
 /outputs
 __pycache__/
 *.h5
-*.png
 *.pkl
 *.mp4

@@ -1,6 +1,8 @@
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), "communication/impl"))
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../train"))
 
 import communication.impl.mimic_msgs_pb2 as mimic_data
 import communication.impl.mimic_pb2_grpc as mimic_grpc

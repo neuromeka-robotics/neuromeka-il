@@ -1,8 +1,72 @@
 import pickle
+import torch
+import numpy as np
+from typing import Dict
 from train.policies import ACTConfig, ACTPolicy
-from deploy.config.model import POLICY
+from config.model import POLICY
+from helper.math_utils import MathFunc
+from helper.extra_utils import NN_CONTROL_STATE
 from ruamel.yaml import YAML
+import torchvision.transforms as transforms
+from enum import Enum
 
+class ControlMode(Enum):
+    JOINT_SPACE = 1
+    TASK_SPACE = 2
+    DELTA_TASK_SPACE = 3
+    RELATIVE_TASK_SPACE = 4
+    RELATIVE_DELTA_TASK_SPACE = 5
+    RELATIVE_XY_TASK_SPACE = 6
+    VISUAL_SERVO = 7
+    
+    @staticmethod
+    def name_to_mode(name: str):
+        if name == "joint_space":
+            return ControlMode.JOINT_SPACE
+        elif name == "task_space":
+            return ControlMode.TASK_SPACE
+        elif name == "delta_task_space":
+            return ControlMode.DELTA_TASK_SPACE
+        elif name == "relative_task_space":
+            return ControlMode.RELATIVE_TASK_SPACE
+        elif name == "relative_delta_task_space":
+            return ControlMode.RELATIVE_DELTA_TASK_SPACE
+        elif name == "relative_xy_task_space":
+            return ControlMode.RELATIVE_XY_TASK_SPACE
+        elif name == "visual_servo":
+            return ControlMode.VISUAL_SERVO
+        else:
+            raise ValueError(f"Unavailable control mode: {name}")
+        
+    @staticmethod
+    def mode_to_action_name(mode):
+        if mode == ControlMode.JOINT_SPACE:
+            return "action.joint"
+        elif mode == ControlMode.TASK_SPACE:
+            return {"pos": "action.end_pos", "ori": "action.end_ori"}
+        elif mode == ControlMode.DELTA_TASK_SPACE:
+            return {"pos": "action.delta.end_pos", "ori": "action.delta.end_ori"}
+        elif mode == ControlMode.RELATIVE_TASK_SPACE:
+            return {"pos": "action.relative.end_pos", "ori": "action.relative.end_ori"}
+        elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
+            return {"pos": "action.relative_delta.end_pos", "ori": "action.relative_delta.end_ori"}
+        elif mode == ControlMode.RELATIVE_XY_TASK_SPACE:
+            return {"pos": "action.relative_xy.end_pos", "ori": "action.end_ori"}
+        elif mode == ControlMode.VISUAL_SERVO:
+            return {"pos": "action.visual_servoing.end_pos", "ori": "action.visual_servoing.end_ori"}
+        else:
+            raise ValueError(f"Unavailable control mode: {mode}")
+    
+    @staticmethod
+    def get_candidate(name: str):
+        if name == "joint":
+            return [ControlMode.JOINT_SPACE]
+        elif name == "task":
+            return [ControlMode.TASK_SPACE, ControlMode.DELTA_TASK_SPACE, 
+                    ControlMode.RELATIVE_TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE, ControlMode.RELATIVE_XY_TASK_SPACE,
+                    ControlMode.VISUAL_SERVO]
+        else:
+            raise ValueError(f"Unavailable property: {name}")
 
 class Empty_NN_policy:
     """
@@ -11,6 +75,7 @@ class Empty_NN_policy:
 
     def __init__(self, task):
         self.task = task
+        self.n_robots = 0
 
     def reset(self):
         pass
@@ -24,8 +89,8 @@ class NN_policy:
     Policy with loaded weights
     """
 
-    def __init__(self, task):
-        self.task = task
+    def __init__(self, task_name, device='cuda'):
+        self.task_name = task_name
         # load policy config
         cfg: Dict[str, Dict] = YAML().load(
             open(
@@ -43,13 +108,6 @@ class NN_policy:
         self.n_obs_steps = policy_config.n_obs_steps
         self.action_update_count = policy_config.n_action_steps
         self.control_mode = policy_config.control_mode
-        self.gripper_mode = GripperMode.robot_mode_to_gripper_mode(
-            policy_config.robot_mode
-        )
-        if self.gripper_mode in [GripperMode.BINARY, GripperMode.CONTINUOUS]:
-            self.use_gripper = True
-        else:
-            self.use_gripper = False
 
         # load dataset statistics
         with open(
@@ -107,10 +165,6 @@ class NN_policy:
 
     def reset(self):
         self.policy.reset()
-        if self.use_gripper:
-            self.prev_trigger_value = torch.zeros(self.n_robots).unsqueeze(
-                0
-            )  # (B, n_robots)
 
         # Used for relaitve transformation
         self.init_end_pos = None
@@ -118,14 +172,12 @@ class NN_policy:
         self.init_relative_end_pos = None
         self.init_relative_end_ori = None
 
-    def __call__(self, **kwargs):
+    def __call__(self, **args):
         # pre-process input data
         qpos = args["qpos"].astype(np.float32)  # (n_joints * n_robots)
         qvel = args["qvel"].astype(np.float32)  # (n_joints * n_robots)
         end_pose = args["end_pos"].astype(np.float32)  # (6 * n_robots)
-        end_vel = args["end_vel"].astype(np.float32)  # (6 * n_robots)
         color_image = args["color_image"].astype(np.float32)  # (N_CAM, H, W, C)
-        depth_image = args["depth_image"].astype(np.float32)  # (N_CAM, H, W, 1)
 
         qpos = MathFunc.degree_to_rad(qpos)
         qvel = MathFunc.degree_to_rad(qvel)
@@ -134,8 +186,6 @@ class NN_policy:
         end_ori = MathFunc.euler_to_rotMat(
             euler_x=end_ori[0], euler_y=end_ori[1], euler_z=end_ori[2]
         )
-        end_linVel = MathFunc.mm_to_m(end_vel[:3])
-        end_angVel = MathFunc.degree_to_rad(end_vel[3:])
         qpos_data = torch.from_numpy(qpos).unsqueeze(0)  # (B, 6 * n_robots)
         qvel_data = torch.from_numpy(qvel).unsqueeze(0)  # (B, 6 * n_robots)
 
@@ -150,58 +200,14 @@ class NN_policy:
             :, 0
         ]  # TODO: Currently, HARDCODE for single camera  # (B, C, H, W)
 
-        if self.image_crop is not None:
-            depth_image = self.image_crop(depth_image)
-        depth_data = torch.from_numpy(depth_image)
-        depth_data = torch.einsum("k h w c -> k c h w", depth_data)
-        depth_data = self.image_resize(depth_data)
-        depth_data = depth_data.unsqueeze(0)  # (B, N_CAM, 1, H, W)
-        depth_data = depth_data[
-            :, 0
-        ]  # TODO: Currently, HARDCODE for single camera  # (B, 1, H, W)
-
-        if self.use_gripper:
-            gripper_position = (
-                args["gripper_position"].astype(np.float32) / 255.0
-            )  # (n_robots)
-            gripper_object_detected = args["gripper_object_detected"].astype(
-                np.float32
-            )  # (n_robots)
-
-            gripper_position_data = torch.from_numpy(gripper_position).unsqueeze(
-                0
-            )  # (B, n_robots)
-            gripper_object_detected_data = torch.from_numpy(
-                gripper_object_detected
-            ).unsqueeze(
-                0
-            )  # (B, n_robots)
-
-        ##############
-        ## Relaitve ##
-        rel_end_pos = self.init_end_ori.T @ (end_pos - self.init_end_pos)
-        rel_xy_end_pos = end_pos.copy()
-        rel_xy_end_pos[:2] = rel_xy_end_pos[:2] - self.init_end_pos[:2]
-        rel_end_ori = (self.init_end_ori.T @ end_ori).reshape(-1)
-        rel_end_linVel = self.init_end_ori.T @ end_linVel
-        rel_end_angVel = self.init_end_ori.T @ end_angVel
-
-        rel_end_pos_data = torch.from_numpy(rel_end_pos).unsqueeze(0)  # (B, 3)
-        rel_xy_end_pos_data = torch.from_numpy(rel_xy_end_pos).unsqueeze(0)  # (B, 3)
-        rel_end_ori_data = torch.from_numpy(rel_end_ori).unsqueeze(0)  # (B, 9)
-        rel_end_linVel_data = torch.from_numpy(rel_end_linVel).unsqueeze(0)  # (B, 3)
-        rel_end_angVel_data = torch.from_numpy(rel_end_angVel).unsqueeze(0)  # (B, 3)
-        ##############
-
         # prepare available data
         available_data = {
             "observation.images.top": image_data,
             "observation.qpos": qpos_data,
             "observation.qvel": qvel_data,
+            "observation.fast.qpos": qpos_data,
+            "observation.fast.qvel": qvel_data,
         }
-
-        if self.use_gripper:
-            available_data["observation.prev_trigger_value"] = self.prev_trigger_value
 
         # select data from the available data that the policy requires
         batch_data_keys = list(self.policy.config.input_shapes.keys())
@@ -217,7 +223,6 @@ class NN_policy:
             batch_data
         )  # (B, 12 * n_robots) or (B, (12 + 1) * n_robots)
         action = output["actions"]
-        success_prob = output["success_probability"]
 
         # post-process
         action = (
@@ -225,17 +230,7 @@ class NN_policy:
         )  # (12 * n_robots) or (12 + 1) * n_robots)
         action_dict = dict()
         action_dict["action"] = action
-
-        if (success_prob is not None) and (
-            POLICY[self.task_name]["deploy"].get("success_threshold") is not None
-        ):
-            success_prob = success_prob.cpu().numpy().squeeze(0).item()
-            if success_prob > POLICY[self.task_name]["deploy"]["success_threshold"]:
-                action_dict["control_state"] = NN_CONTROL_STATE.TASK_FINISH
-            else:
-                action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS
-        else:
-            action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS
+        action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS
 
         for robot_id in range(self.n_robots):
             pos_action = action[3 * robot_id : 3 * (robot_id + 1)]
@@ -255,9 +250,14 @@ class NN_policy:
                         and ori_fix_config.get("yaw")
                     ):
                         rot_action = self.init_end_ori
-            elif self.control_mode == ControlMode.RELATIVE_TASK_SPACE:
-                pos_action = self.init_end_ori @ pos_action + self.init_end_pos
-                rot_action = self.init_end_ori @ rot_action
+            elif self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
+                pos_action = self.init_relative_end_ori @ pos_action + self.init_relative_end_pos
+                rot_action = self.init_relative_end_ori @ rot_action
+
+                if POLICY[self.task_name]["deploy"].get("fix"):
+                    ori_fix_config: Dict = POLICY[self.task_name]["deploy"].get("fix")
+                    if ori_fix_config.get("roll") and ori_fix_config.get("pitch") and ori_fix_config.get("yaw"):
+                        rot_action = self.init_relative_end_ori
 
             pos_action = MathFunc.m_to_mm(pos_action)  # (3,)
             euler_action = MathFunc.rotMat_to_euler(rot_action)
@@ -265,29 +265,5 @@ class NN_policy:
             action_dict[f"robot_action_{robot_id}"] = np.concatenate(
                 (pos_action, euler_action), axis=-1
             )  # (6,)
-
-        if self.use_gripper:
-            # TODO: Fix required for {0: no gripper, 1: gripper}
-            # Current implementation only works for {0: gripper, 1: no gripper}
-            for robot_id in range(self.n_robots):
-                trigger_value = action[-(self.n_robots - robot_id)]
-
-                if self.gripper_mode == GripperMode.BINARY:
-                    if trigger_value < 0.5:
-                        action_dict[f"gripper_action_{robot_id}"] = 3
-                        self.prev_trigger_value[:, robot_id] = 0.0
-                    else:
-                        action_dict[f"gripper_action_{robot_id}"] = 228
-                        self.prev_trigger_value[:, robot_id] = 1.0
-                elif self.gripper_mode == GripperMode.CONTINUOUS:
-                    trigger_value = np.clip(trigger_value, a_min=0.0, a_max=1.0)
-                    action_dict[f"gripper_action_{robot_id}"] = int(
-                        3 + trigger_value * (228 - 3)
-                    )
-                    self.prev_trigger_value[:, robot_id] = trigger_value
-                else:
-                    raise NotImplementedError(
-                        f"Not implemented gripper mode ({self.gripper_mode})"
-                    )
 
         return action_dict

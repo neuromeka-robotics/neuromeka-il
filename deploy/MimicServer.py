@@ -9,6 +9,7 @@ import communication.impl.mimic_pb2_grpc as mimic_grpc
 
 from config.robot import ROBOT_HOME_POS
 from imitation_learning.controller import NN_controller
+from communication.robot import Robot
 
 PC_DEVICE_PORT = 20500
 WEIGHT_DIR = os.path.join(os.path.dirname(__file__), "weights")
@@ -38,6 +39,7 @@ class MimicPCServicer(mimic_grpc.MoveMimicServicer):
         else:
             self.robot_ip = 'unknown'
         print(f"Client is connected to server at IP: {self.robot_ip}")
+        robot = Robot(0, self.robot_ip)
 
         # Get skill list
         skills = os.listdir(WEIGHT_DIR)
@@ -45,7 +47,8 @@ class MimicPCServicer(mimic_grpc.MoveMimicServicer):
         # (1) Initialize neural network controller 
         # (2) Set connection to the robot and camera
         if self.nn_controller is None:
-            self.nn_controller = NN_controller(tasks=skills)
+            self.nn_controller = NN_controller(tasks=skills, robot={0: robot})
+        #import pdb; pdb.set_trace()
         return mimic_data.MimicSkillList(skill_list=skills)
         
     def GetSkillHome(self, request: mimic_data.MimicSkillName, context) -> mimic_data.GetSkillHomeRes:
@@ -53,9 +56,10 @@ class MimicPCServicer(mimic_grpc.MoveMimicServicer):
         name = request.name
         assert name in ROBOT_HOME_POS.keys(), f"Home positiion for '{name}' not defined"
 
-        return mimic_data.GetSkillHomeRes(jpos=ROBOT_HOME_POS[name])
+        return mimic_data.GetSkillHomeRes(jpos=ROBOT_HOME_POS[name][0]) # Move mimic only supports 1 robot
     
     def RunSkill(self, request: mimic_data.MimicSkillName, context) -> mimic_data.Response:
+        print("RunSkill called")
         name = request.name
         assert name in self.nn_controller.get_available_tasks(), f"Task '{name}' not defined"
         
@@ -64,10 +68,13 @@ class MimicPCServicer(mimic_grpc.MoveMimicServicer):
         
         # Run model
         self.nn_controller.exec_nn_control(task=name, duration=MAX_CONTROL_DURATION)
+        print("RunSkill done")
         return mimic_data.Response()
     
     def StopSkill(self, request: mimic_data.Empty, context) -> mimic_data.Response:
+        print("StopSkill called")
         self.nn_controller.exec_nn_control_stop()
+        print("StopSkill done")
         return mimic_data.Response()
         
         

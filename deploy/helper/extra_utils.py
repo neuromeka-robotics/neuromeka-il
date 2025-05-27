@@ -1,6 +1,7 @@
 from enum import Enum, auto
 from neuromeka import control_msgs
 
+
 class ROBOT_STATE:
     IDLE = 5
     MOVE = 6

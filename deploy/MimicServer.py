@@ -8,8 +8,8 @@ import communication.impl.mimic_msgs_pb2 as mimic_data
 import communication.impl.mimic_pb2_grpc as mimic_grpc
 
 from config.robot import ROBOT_HOME_POS
-from imitation_learning.controller import NN_controller
 from communication.robot import Robot
+from imitation_learning.controller import NN_controller
 
 PC_DEVICE_PORT = 20500
 WEIGHT_DIR = os.path.join(os.path.dirname(__file__), "weights")
@@ -47,7 +47,7 @@ class MimicPCServicer(mimic_grpc.MoveMimicServicer):
         # (1) Initialize neural network controller 
         # (2) Set connection to the robot and camera
         if self.nn_controller is None:
-            self.nn_controller = NN_controller(tasks=skills, robot={0: robot})
+            self.nn_controller = NN_controller(robot={0: robot}, tasks=skills)
         #import pdb; pdb.set_trace()
         return mimic_data.MimicSkillList(skill_list=skills)
         

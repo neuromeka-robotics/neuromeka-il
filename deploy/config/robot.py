@@ -7,8 +7,10 @@ ROBOT_HOME_POS = {
 
 CONTROL = {
     "period": 0.05,
-    "vel_scale": 0.4,  # 0 ~ 1
-    "acc_scale": 4.0,  # 0 ~ 10
+    "vel_scale": 1.,  # 0 ~ 1
+    "acc_scale": 10.,  # 0 ~ 10
+    "move_vel_scale": 50,  # 0 ~ 100
+    "move_acc_scale": 50  # 0 ~ 1000
 }
 
 ROBOT_CONFIG = {

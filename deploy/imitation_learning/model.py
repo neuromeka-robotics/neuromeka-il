@@ -1,72 +1,53 @@
-import pickle
-import torch
-import numpy as np
 from typing import Dict
-from train.policies import ACTConfig, ACTPolicy
+
+import pickle
+from ruamel.yaml import YAML
+from enum import Enum
+import re
+import sys
+import numpy as np
+import torch
+import torchvision.transforms as transforms
+
 from config.model import POLICY
+
 from helper.math_utils import MathFunc
 from helper.extra_utils import NN_CONTROL_STATE
-from ruamel.yaml import YAML
-import torchvision.transforms as transforms
-from enum import Enum
+
+match = re.search(r'(.*/neuromeka-il/)', os.path.abspath(__file__))
+sys.path.append(os.path.join(match.group(1), "train"))
+from policies import ACTConfig, ACTPolicy
+
 
 class ControlMode(Enum):
-    JOINT_SPACE = 1
-    TASK_SPACE = 2
-    DELTA_TASK_SPACE = 3
-    RELATIVE_TASK_SPACE = 4
-    RELATIVE_DELTA_TASK_SPACE = 5
-    RELATIVE_XY_TASK_SPACE = 6
-    VISUAL_SERVO = 7
+    TASK_SPACE = 1
+    RELATIVE_DELTA_TASK_SPACE = 2
     
     @staticmethod
     def name_to_mode(name: str):
-        if name == "joint_space":
-            return ControlMode.JOINT_SPACE
-        elif name == "task_space":
+        if name == "task_space":
             return ControlMode.TASK_SPACE
-        elif name == "delta_task_space":
-            return ControlMode.DELTA_TASK_SPACE
-        elif name == "relative_task_space":
-            return ControlMode.RELATIVE_TASK_SPACE
         elif name == "relative_delta_task_space":
             return ControlMode.RELATIVE_DELTA_TASK_SPACE
-        elif name == "relative_xy_task_space":
-            return ControlMode.RELATIVE_XY_TASK_SPACE
-        elif name == "visual_servo":
-            return ControlMode.VISUAL_SERVO
         else:
             raise ValueError(f"Unavailable control mode: {name}")
         
     @staticmethod
     def mode_to_action_name(mode):
-        if mode == ControlMode.JOINT_SPACE:
-            return "action.joint"
-        elif mode == ControlMode.TASK_SPACE:
+        if mode == ControlMode.TASK_SPACE:
             return {"pos": "action.end_pos", "ori": "action.end_ori"}
-        elif mode == ControlMode.DELTA_TASK_SPACE:
-            return {"pos": "action.delta.end_pos", "ori": "action.delta.end_ori"}
-        elif mode == ControlMode.RELATIVE_TASK_SPACE:
-            return {"pos": "action.relative.end_pos", "ori": "action.relative.end_ori"}
         elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
             return {"pos": "action.relative_delta.end_pos", "ori": "action.relative_delta.end_ori"}
-        elif mode == ControlMode.RELATIVE_XY_TASK_SPACE:
-            return {"pos": "action.relative_xy.end_pos", "ori": "action.end_ori"}
-        elif mode == ControlMode.VISUAL_SERVO:
-            return {"pos": "action.visual_servoing.end_pos", "ori": "action.visual_servoing.end_ori"}
         else:
             raise ValueError(f"Unavailable control mode: {mode}")
     
     @staticmethod
     def get_candidate(name: str):
-        if name == "joint":
-            return [ControlMode.JOINT_SPACE]
-        elif name == "task":
-            return [ControlMode.TASK_SPACE, ControlMode.DELTA_TASK_SPACE, 
-                    ControlMode.RELATIVE_TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE, ControlMode.RELATIVE_XY_TASK_SPACE,
-                    ControlMode.VISUAL_SERVO]
+        if name == "task":
+            return [ControlMode.TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE]
         else:
             raise ValueError(f"Unavailable property: {name}")
+
 
 class Empty_NN_policy:
     """
@@ -91,6 +72,7 @@ class NN_policy:
 
     def __init__(self, task_name, device='cuda'):
         self.task_name = task_name
+
         # load policy config
         cfg: Dict[str, Dict] = YAML().load(
             open(
@@ -167,8 +149,6 @@ class NN_policy:
         self.policy.reset()
 
         # Used for relaitve transformation
-        self.init_end_pos = None
-        self.init_end_ori = None
         self.init_relative_end_pos = None
         self.init_relative_end_ori = None
 
@@ -196,17 +176,13 @@ class NN_policy:
         image_data = self.image_resize(image_data)
         image_data /= 255.0
         image_data = image_data.unsqueeze(0)  # (B, N_CAM, C, H, W)
-        image_data = image_data[
-            :, 0
-        ]  # TODO: Currently, HARDCODE for single camera  # (B, C, H, W)
+        image_data = image_data[:, 0]  # TODO: Currently, HARDCODE for single camera  # (B, C, H, W)
 
         # prepare available data
         available_data = {
             "observation.images.top": image_data,
             "observation.qpos": qpos_data,
             "observation.qvel": qvel_data,
-            "observation.fast.qpos": qpos_data,
-            "observation.fast.qvel": qvel_data,
         }
 
         # select data from the available data that the policy requires
@@ -219,49 +195,34 @@ class NN_policy:
             self.init_relative_end_pos = end_pos
             self.init_relative_end_ori = end_ori
 
-        output = self.policy.select_action(
-            batch_data
-        )  # (B, 12 * n_robots) or (B, (12 + 1) * n_robots)
-        action = output["actions"]
+        # forward pass neural network
+        output = self.policy.select_action(batch_data)  # (B, 12 * n_robots) or (B, (12 + 1) * n_robots)
+        action = output["actions"].squeeze(0).cpu().numpy()
+        success_prob = output["success_probability"].squeeze(0).cpu().numpy().item()
 
-        # post-process
-        action = (
-            action.squeeze(0).cpu().numpy()
-        )  # (12 * n_robots) or (12 + 1) * n_robots)
+        # post-process output data
         action_dict = dict()
         action_dict["action"] = action
-        action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS
+
+        if success_prob > POLICY[self.task_name]["deploy"].get("success_threshold", 1.):
+            action_dict["control_state"] = NN_CONTROL_STATE.TASK_FINISH
+        else:
+            action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS
 
         for robot_id in range(self.n_robots):
             pos_action = action[3 * robot_id : 3 * (robot_id + 1)]
             rot_action = action[
-                3 * self.n_robots
-                + 9 * robot_id : 3 * self.n_robots
-                + 9 * (robot_id + 1)
+                3 * self.n_robots + 9 * robot_id : 
+                3 * self.n_robots + 9 * (robot_id + 1)
             ].reshape(3, 3)
 
-            if self.control_mode == ControlMode.TASK_SPACE:
-                # Apply heuristic (FIX ROLL/PITCH/YAW)
-                if POLICY[self.task_name]["deploy"].get("fix"):
-                    ori_fix_config: Dict = POLICY[self.task_name]["deploy"].get("fix")
-                    if (
-                        ori_fix_config.get("roll")
-                        and ori_fix_config.get("pitch")
-                        and ori_fix_config.get("yaw")
-                    ):
-                        rot_action = self.init_end_ori
-            elif self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
+            if self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
                 pos_action = self.init_relative_end_ori @ pos_action + self.init_relative_end_pos
                 rot_action = self.init_relative_end_ori @ rot_action
 
-                if POLICY[self.task_name]["deploy"].get("fix"):
-                    ori_fix_config: Dict = POLICY[self.task_name]["deploy"].get("fix")
-                    if ori_fix_config.get("roll") and ori_fix_config.get("pitch") and ori_fix_config.get("yaw"):
-                        rot_action = self.init_relative_end_ori
-
-            pos_action = MathFunc.m_to_mm(pos_action)  # (3,)
+            pos_action = MathFunc.m_to_mm(pos_action)
             euler_action = MathFunc.rotMat_to_euler(rot_action)
-            euler_action = MathFunc.rad_to_degree(euler_action)  # (3,)
+            euler_action = MathFunc.rad_to_degree(euler_action)
             action_dict[f"robot_action_{robot_id}"] = np.concatenate(
                 (pos_action, euler_action), axis=-1
             )  # (6,)

@@ -110,7 +110,7 @@ class ACTPolicy(nn.Module):
             if self.config.use_success_detector:
                 success_prob = output["success_probability"][:, 0]  # (B,) Only use first step
             else:
-                success_prob = None
+                success_prob = torch.zeros_like(actions[:, 0, 0])
             
             # Unnormalize action
             # Action order assumption
@@ -147,7 +147,7 @@ class ACTPolicy(nn.Module):
             if self.config.use_success_detector:
                 self._success_prob = output["success_probability"][:, 0]  # (B,) Only use first step
             else:
-                self._success_prob = None
+                self._success_prob = torch.zeros_like(actions[:, 0, 0])
             
             # apply orthogonalization of task space control
             if self.config.control_mode in ControlMode.get_candidate("task"):

@@ -1,40 +1,31 @@
 import time
 from typing import Dict, List
 
-# help functions
 from helper.extra_utils import ROBOT_STATE
 
-# config
 from config.robot import ROBOT_HOME_POS, CONTROL, ROBOT_ID
 
-# communication
-from communication.robot import Robot
+from communication.robot import Robot, RobotCluster
 
 class Controller:
-    def __init__(self, **kwargs):
-        # set robot connection
-        self.robot: Dict[int, Robot] = dict()
-        # for robot_id in ROBOT_ID:
-        #     self.robot[robot_id] = Robot(robot_id)
+    def __init__(self, robot: Dict[int, Robot], **kwargs):
+        # set robot
+        self.robot: Dict[int, Robot] = robot
+        self.robot_cluster = RobotCluster(robots=self.robot)
 
-    def exec_home_pos(self, task, wait=False, tele_mode=False, mode="joint_abs", **kwargs):
+    def exec_home_pos(self, task, wait=False, **kwargs):
         assert task in ROBOT_HOME_POS.keys(), f"Robot home position for '{task}' not set."
-        assert mode in ["joint_abs", "joint_abs_w_safety"]
 
         for robot_id in ROBOT_HOME_POS[task].keys():
-            if tele_mode:
-                self.set_teleop(robot_id, mode="joint_abs")
-            else:
-                self.set_idle(robot_id)
+            self.set_idle(robot_id)
             time.sleep(0.1)
 
-            self.robot[robot_id].move(
-                target_pos=ROBOT_HOME_POS[task][robot_id],
-                mode=mode,
-                wait=wait,
-                tele_mode=tele_mode,
-                **kwargs
-            )
+        self.robot_cluster.move(
+            target_pos={robot_id: ROBOT_HOME_POS[task][robot_id] for robot_id in ROBOT_HOME_POS[task].keys()},
+            mode="joint_abs",
+            wait=wait,
+            **kwargs
+        )
 
     def exec_set_teleop(self):
         for robot_id in ROBOT_ID:
@@ -43,6 +34,7 @@ class Controller:
     def exec_set_idle(self):
         for robot_id in ROBOT_ID:
             self.set_idle(robot_id)
+            time.sleep(0.1)
 
     def exec_direct_teaching(self, enable: bool):
         for robot_id in ROBOT_ID:
@@ -78,7 +70,7 @@ class Controller:
                     time.sleep(3.)
 
     def exec_soft_stop(self, task_robot_ids: List[int], last_action: Dict[int, List[float]], control_period: float, mode: str):
-        assert mode in ["joint_abs", "task_abs", "joint_abs_w_safety", "task_abs_w_safety"], f"Unavailable control mode {mode}"
+        assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
 
         soft_stop_start = time.time()
 
@@ -98,6 +90,7 @@ class Controller:
                 time.sleep(wait_time)
 
     def set_teleop(self, robot_id, mode="task_abs"):
+        assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
         assert robot_id in ROBOT_ID, f"Unavailable robot ID {robot_id}"
 
         time_limit = 10.  # sec

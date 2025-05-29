@@ -8,7 +8,7 @@ POLICY = {
             "configuration": "config.yaml",
         },
         "deploy": {
-            "camera_serial": "233522079515",
+            "camera_serial": "427622270318",
             "success_threshold": 1.,
         },
     },

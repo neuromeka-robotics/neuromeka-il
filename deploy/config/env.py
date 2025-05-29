@@ -1,7 +1,7 @@
 CAMERA = {
-    "imitation": ["233522079515"],  # If None, use the automatically detected camera
+    "imitation": ["427622270318"],  # If None, use the automatically detected camera
     "exposure": {
-        "233522079515": 100,
+        "427622270318": 100,
     }
 }
 

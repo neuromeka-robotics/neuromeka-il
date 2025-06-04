@@ -3,6 +3,7 @@ from typing import Dict
 import pickle
 from ruamel.yaml import YAML
 from enum import Enum
+import os
 import re
 import sys
 import numpy as np
@@ -17,37 +18,7 @@ from helper.extra_utils import NN_CONTROL_STATE
 match = re.search(r'(.*/neuromeka-il/)', os.path.abspath(__file__))
 sys.path.append(os.path.join(match.group(1), "train"))
 from policies import ACTConfig, ACTPolicy
-
-
-class ControlMode(Enum):
-    TASK_SPACE = 1
-    RELATIVE_DELTA_TASK_SPACE = 2
-    
-    @staticmethod
-    def name_to_mode(name: str):
-        if name == "task_space":
-            return ControlMode.TASK_SPACE
-        elif name == "relative_delta_task_space":
-            return ControlMode.RELATIVE_DELTA_TASK_SPACE
-        else:
-            raise ValueError(f"Unavailable control mode: {name}")
-        
-    @staticmethod
-    def mode_to_action_name(mode):
-        if mode == ControlMode.TASK_SPACE:
-            return {"pos": "action.end_pos", "ori": "action.end_ori"}
-        elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
-            return {"pos": "action.relative_delta.end_pos", "ori": "action.relative_delta.end_ori"}
-        else:
-            raise ValueError(f"Unavailable control mode: {mode}")
-    
-    @staticmethod
-    def get_candidate(name: str):
-        if name == "task":
-            return [ControlMode.TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE]
-        else:
-            raise ValueError(f"Unavailable property: {name}")
-
+from policies.selection import ControlMode
 
 class Empty_NN_policy:
     """

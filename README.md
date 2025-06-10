@@ -11,8 +11,8 @@ This repository contains an implementation for training neural network controlle
 
 1.  Clone this repository:
     ```bash
-    git clone <repository-url>
-    cd <repository-directory>
+    git clone https://github.com/neuromeka-robotics/neuromeka-il.git
+    cd neuromeka-il
     ```
 
 2.  Create a conda environment using the provided `train/environment.yaml` file. The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with CUDA 12.1 on NVIDIA RTX 4090.

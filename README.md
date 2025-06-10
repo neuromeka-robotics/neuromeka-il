@@ -127,16 +127,9 @@ To start the server:
 python deploy/MimicServer.py
 ```
 
-You can also use the `deploy/RunMimicServer.ipynb` notebook for an interactive way to start and test the server.
-
 ### 4. Control the Robot
 
-Once the server is running, you can use a gRPC client to send commands. The available RPCs are defined in `deploy/communication/impl/mimic.proto` and include:
--   `SetRobotAddress`
--   `GetSkillList`
--   `GetSkillHome`
--   `RunSkill`
--   `StopSkill`
+In Conty, you can use MoveMimic to control the robot with the trained policy.
 
 ## Credits
 The algorithm code is modified version from [LeRobot](https://github.com/huggingface/lerobot), which is licensed under the Apache-2.0 license.
@@ -146,4 +139,4 @@ The algorithm code is modified version from [LeRobot](https://github.com/hugging
 
 ## License
 
-This project is licensed under the terms of the license agreement found in `train/LICENSE`.
+This project is licensed under the terms of the license agreement found in `LICENSE`.

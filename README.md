@@ -1,6 +1,6 @@
 # Neuromeka Imitation Learning
 
-This repository contains code for training and deploying imitation learning policies for Neuromeka robots. The policy is based on [Action Chunking with Transformers (ACT)](https://arxiv.org/abs/2304.13705).
+This repository contains an implementation for training neural network controllers with imitation learning. The codebase was used to control either a single or dual [Indy7](https://en.neuromeka.com/indy) robots manufactured by Neuromeka. ([Demo video](https://youtu.be/xl4yk2qT7DA?si=70NDDoPU6yNK84tE)) The policy is based on [Action Chunking with Transformers (ACT)](https://arxiv.org/abs/2304.13705).
 
 ## Repository Structure
 
@@ -15,41 +15,95 @@ This repository contains code for training and deploying imitation learning poli
     cd <repository-directory>
     ```
 
-2.  Create a conda environment using the provided `train/environment.yaml` file. This will install all the necessary dependencies.
+2.  Create a conda environment using the provided `train/environment.yaml` file. The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with CUDA 12.1 on NVIDIA RTX 4090.
     ```bash
-    conda env create -f train/environment.yaml
-    conda activate neuromeka-il
+    conda env create -f train/environment.yaml -n env_il
     ```
 
 ## Training
 
-The training pipeline uses `pytorch` for model implementation and `hydra` for configuration management.
+### Training configurations
+The codebase supports below configurations.
 
-### 1. Prepare Your Dataset
+(1) Algorithm
+- ACT (i.e., Action Chunking Transformer) [[Paper](https://arxiv.org/abs/2304.13705)]
 
-The training script expects a dataset with a specific structure.
--   Use `train/preprocess.py` to process your raw robot demonstration data into the required format.
--   For testing purposes, you can generate a synthetic dataset by running:
-    ```bash
-    bash train/make_fake_data.sh
-    ```
-    This will create a `data/` directory with some sample episodes.
+(2) Robot mode
+- Single robot arm
+- Single robot arm with gripper
+- Dual robot arm
+- Dual robot arm with gripper
 
-### 2. Configure Your Training Run
+(3) Control mode (i.e., output of neural network)
+- Task space
+- Relative delta task space [[Paper](https://arxiv.org/abs/2402.10329)]
 
-Training configurations are located in `train/config/`. You can find example configurations in `train/config/example/`.
-To create a new training run, you can either create a new `.yaml` file or override parameters from the command line.
+Configurations can be controlled via *yaml* files listed below `train/config`. Create a new folder and custom configuration files similar to those in `train/config/example`.
 
-### 3. Run Training
+### Usage
+The collected data should be first located under `data` as follows.
+```
+|- data
+|---TASK_NAME
+|----- 0.h5
+|----- 1.h5
+|---- ...
+```
+Then, follow below **three** steps.
 
-To start a training run, use `train/imitate.py`. You need to specify the configuration to use.
-
-For example, to train with the `single_robot_task` configuration:
-```bash
-python train/imitate.py --config-name=example/single_robot_task
+First, activate conda environment.
+```
+conda activate env_il
+```
+Second, preprocess data. The preprocessed data will be saved under `processed_data`.
+```
+python train/preprocess.py --task TASK_NAME
+```
+Third, train neural networks.
+```
+python train/imitate.py --config-path=train/config/CONFIG_DIRECTORY --config-name=CONFIG_FILE
 ```
 
-Trained model weights (`.pth` files) and logs will be saved in an output directory managed by Hydra (e.g., `outputs/YYYY-MM-DD/HH-MM-SS/`).
+### Usage examples
+We provide a pipeline that tests the implementation with randomly generated data, helping individuals understand the process and required data format.
+
+Before proceeding with the pipeline below, make sure that your SSD has at least 1GB of free memory.
+
+First, create and preprocess synthetic data. Four datasets (*test_single_robot*, *test_single_robot_gripper*, *test_dual_robot*, *test_dual_robot_gripper*) will be generated under `data` and `processed_data`.
+```
+bash train/make_fake_data.sh
+```
+Then, train neural networks with example configurations.
+```
+# Example 1: Single robot + Task space action
+python train/imitate.py --config-path=train/config/example --config-name=single_robot_task.yaml 
+
+# Example 2: Single robot + Relative delta task space action
+python train/imitate.py --config-path=train/config/example --config-name=single_robot_relative_delta.yaml
+
+# Example 3: Single robot with gripper + Task space action
+python train/imitate.py --config-path=train/config/example --config-name=single_robot_gripper_task.yaml
+
+# Example 4: Single robot with gripper + Relative delta task space action
+python train/imitate.py --config-path=train/config/example --config-name=single_robot_gripper_relative_delta.yaml
+
+# Example 5: Dual robot + Task space action
+python train/imitate.py --config-path=train/config/example --config-name=dual_robot_task.yaml
+
+# Example 6: Dual robot + Relative delta task space action
+python train/imitate.py --config-path=train/config/example --config-name=dual_robot_relative_delta.yaml
+
+# Example 7: Dual robot with gripper + Task space action
+python train/imitate.py --config-path=train/config/example --config-name=dual_robot_gripper_task.yaml
+
+# Example 8: Dual robot with gripper + Relative delta task space action
+python train/imitate.py --config-path=train/config/example --config-name=dual_robot_gripper_relative_delta.yaml 
+```
+
+### Training plot examples
+[Wandb](https://wandb.ai/site/) can be enabled in the configuration file to visualize training progress. Below is an example results for single robot arm task.
+
+<img width=600 src='train/plot/example_result.png'>
 
 ## Deployment
 
@@ -83,6 +137,12 @@ Once the server is running, you can use a gRPC client to send commands. The avai
 -   `GetSkillHome`
 -   `RunSkill`
 -   `StopSkill`
+
+## Credits
+The algorithm code is modified version from [LeRobot](https://github.com/huggingface/lerobot), which is licensed under the Apache-2.0 license.
+
+## Authors
+[Neuromeka AI team](https://ai.neuromeka.com/)
 
 ## License
 

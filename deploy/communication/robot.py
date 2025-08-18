@@ -4,24 +4,15 @@ import numpy as np
 from threading import Thread
 from collections import deque
 
-from config.robot import ROBOT_CONFIG, CONTROL
-
 from neuromeka import IndyDCP3 as RobotClient
 from neuromeka import BlendingType, StopCategory
 
+# helper functions
 from helper.extra_utils import ROBOT_CONTROL_MODE, ROBOT_STATE
 
-
 class Robot:
-    def __init__(self, 
-                 robot_id: int=0, 
-                 robot_ip: str | None=None):
-        self.robot_id = robot_id
-
-        if robot_ip is not None:
-            self.robot_client = RobotClient(robot_ip=robot_ip)
-        else:
-            self.robot_client = RobotClient(robot_ip=ROBOT_CONFIG[robot_id]["ip"])
+    def __init__(self, robot_ip: str):
+        self.robot_client = RobotClient(robot_ip=robot_ip)
 
     def get_state(self) -> Dict:
         state = self.robot_client.get_robot_data()
@@ -60,20 +51,25 @@ class Robot:
     def set_direct_teaching(self, enable: bool):
         self.robot_client.set_direct_teaching(enable)
 
-    def move(self, target_pos: List[float], mode: str = "joint_abs", wait=False, **kwargs):
+    def move(self, 
+             target_pos: List[float], 
+             mode: str = "joint_abs", 
+             wait=False, 
+             vel_ratio=50, acc_ratio=50,
+             **kwargs):
         assert mode in ["joint_abs", "task_abs"], f"Unsupported mode: {mode}"
 
         if mode == "joint_abs":
             self.robot_client.movej(
                 jtarget=target_pos, 
-                vel_ratio=kwargs.get("vel_ratio", CONTROL["move_vel_scale"]), 
-                acc_ratio=kwargs.get("acc_ratio", CONTROL["move_acc_scale"]), 
+                vel_ratio=vel_ratio, 
+                acc_ratio=acc_ratio, 
                 blending_type=kwargs.get("blending_type", BlendingType.NONE))
         elif mode == "task_abs":
             self.robot_client.movel(
                 ttarget=target_pos,
-                vel_ratio=kwargs.get("vel_ratio", CONTROL["move_vel_scale"]), 
-                acc_ratio=kwargs.get("acc_ratio", CONTROL["move_acc_scale"]), 
+                vel_ratio=vel_ratio, 
+                acc_ratio=acc_ratio, 
                 blending_type=kwargs.get("blending_type", BlendingType.NONE))
         else:
             raise NotImplementedError
@@ -84,20 +80,24 @@ class Robot:
             while self.get_state()["op_state"] == ROBOT_STATE.MOVE:
                 time.sleep(0.1)
 
-    def tele_move(self, action: List[float], mode: str = "joint_abs", **kwargs):
+    def tele_move(self, 
+                  action: List[float], 
+                  mode: str = "joint_abs", 
+                  vel_scale=0.5, acc_scale=0.5,
+                  **kwargs):
         assert mode in ["joint_abs", "task_abs"], f"Unsupported mode: {mode}"
 
         if mode == "joint_abs":
             self.robot_client.movetelej_abs(
                 jpos=action,
-                vel_ratio=kwargs.get("vel_scale", CONTROL["vel_scale"]),
-                acc_ratio=kwargs.get("acc_scale", CONTROL["acc_scale"])
+                vel_ratio=vel_scale,
+                acc_ratio=acc_scale
             )
         elif mode == "task_abs":
             self.robot_client.movetelel_abs(
                 tpos=action,
-                vel_ratio=kwargs.get("vel_scale", CONTROL["vel_scale"]),
-                acc_ratio=kwargs.get("acc_scale", CONTROL["acc_scale"])
+                vel_ratio=vel_scale,
+                acc_ratio=acc_scale
             )
         else:
             raise NotImplementedError
@@ -160,19 +160,30 @@ class RobotCluster:
         for robot_id in robot_ids:
             self.robots[robot_id].set_direct_teaching(enable=enable)
 
-    def move(self, target_pos: Dict[int, List[float]], mode: str = "joint_abs", wait=False, **kwargs):
+    def move(self, 
+             target_pos: Dict[int, List[float]], 
+             vel_ratio=Dict[int, float], acc_ratio=Dict[int, float],
+             mode: str = "joint_abs", 
+             wait=False, 
+             **kwargs):
         for robot_id, pos in target_pos.items():
             self.robots[robot_id].move(
                 target_pos=pos,
                 mode=mode,
                 wait=wait,
+                vel_ratio=vel_ratio[robot_id], acc_ratio=acc_ratio[robot_id],
                 **kwargs
             )
 
-    def tele_move(self, action: Dict[int, List[float]], mode: str = "joint_abs", **kwargs):
+    def tele_move(self, 
+                  action: Dict[int, List[float]], 
+                  vel_scale=Dict[int, float], acc_scale=Dict[int, float],
+                  mode: str = "joint_abs", 
+                  **kwargs):
         for robot_id, pos in action.items():
             self.robots[robot_id].tele_move(
                 action=pos,
                 mode=mode,
+                vel_scale=vel_scale[robot_id], acc_scale=acc_scale[robot_id],
                 **kwargs
             )

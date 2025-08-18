@@ -1,43 +1,76 @@
+# base
+from __future__ import annotations
+from typing import Dict, List, Union
 import time
-from typing import Dict, List
 
+# helper functions
 from helper.extra_utils import ROBOT_STATE
 
-from config.robot import ROBOT_HOME_POS, CONTROL, ROBOT_ID
-
+# communication
 from communication.robot import Robot, RobotCluster
 
+# config
+from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG, BASE_ROBOT_CONFIG, BASE_TASK_CONFIG
+
+
+def require_robot_id(func):
+    def wrapper(self, *args, **kwargs):
+        self.check_robot_id()
+        return func(self, *args, **kwargs)
+    return wrapper
+
+
 class Controller:
-    def __init__(self, robot: Dict[int, Robot], **kwargs):
+    ROBOT_CONFIG = BASE_ROBOT_CONFIG
+    ROBOT_IDS = BASE_ROBOT_CONFIG.robot_ids
+    TASK_CONFIG = BASE_TASK_CONFIG
+    TASK_NAME = BASE_TASK_CONFIG.name
+        
+    def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
-        self.robot: Dict[int, Robot] = robot
+        self.robot: Dict[int, Robot] = dict()
+        if robot is not None:
+            self.robot = robot
+            for robot_id in self.ROBOT_IDS:
+                assert robot_id in self.robot.keys(), f"Robot id {robot_id} does not exist"
+                assert isinstance(self.robot[robot_id], Robot), f"Wrong robot instance for id {robot_id}"
+        else:
+            for robot_id in self.ROBOT_IDS:
+                self.robot[robot_id] = Robot(robot_ip=self.ROBOT_CONFIG.robot_params[robot_id]["ip"])
         self.robot_cluster = RobotCluster(robots=self.robot)
 
-    def exec_home_pos(self, task, wait=False, **kwargs):
-        assert task in ROBOT_HOME_POS.keys(), f"Robot home position for '{task}' not set."
-
-        for robot_id in ROBOT_HOME_POS[task].keys():
+    @require_robot_id
+    def exec_home_pos(self, wait=False):
+        for robot_id in self.ROBOT_IDS:
             self.set_idle(robot_id)
             time.sleep(0.1)
+        
+        target_pos_dict = dict()
+        for robot_id in self.ROBOT_IDS:
+            if self.ROBOT_CONFIG.robot_params[robot_id]["home_pos"] is not None:
+                target_pos_dict[robot_id] = self.ROBOT_CONFIG.robot_params[robot_id]["home_pos"]
 
         self.robot_cluster.move(
-            target_pos={robot_id: ROBOT_HOME_POS[task][robot_id] for robot_id in ROBOT_HOME_POS[task].keys()},
+            target_pos=target_pos_dict,
             mode="joint_abs",
             wait=wait,
-            **kwargs
+            vel_ratio={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["move_vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+            acc_ratio={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["move_acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
         )
 
+    @require_robot_id
     def exec_set_teleop(self):
-        for robot_id in ROBOT_ID:
+        for robot_id in self.ROBOT_IDS:
             self.set_teleop(robot_id)
 
+    @require_robot_id
     def exec_set_idle(self):
-        for robot_id in ROBOT_ID:
+        for robot_id in self.ROBOT_IDS:
             self.set_idle(robot_id)
-            time.sleep(0.1)
 
+    @require_robot_id
     def exec_direct_teaching(self, enable: bool):
-        for robot_id in ROBOT_ID:
+        for robot_id in self.ROBOT_IDS:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if enable:
                 if robot_state != ROBOT_STATE.DIRECT_TEACHING:
@@ -55,8 +88,9 @@ class Controller:
                 if robot_state == ROBOT_STATE.DIRECT_TEACHING:
                     self.robot[robot_id].set_direct_teaching(enable=False)
 
+    @require_robot_id
     def exec_emergency_stop(self, enable: bool):
-        for robot_id in ROBOT_ID:
+        for robot_id in self.ROBOT_IDS:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if enable:
                 if robot_state != ROBOT_STATE.STOP:
@@ -69,7 +103,10 @@ class Controller:
                     self.robot[robot_id].recover()
                     time.sleep(3.)
 
-    def exec_soft_stop(self, task_robot_ids: List[int], last_action: Dict[int, List[float]], control_period: float, mode: str):
+    def exec_soft_stop(self, 
+                       last_action: Dict[int, List[float]], 
+                       control_period: float, 
+                       mode: str = "task_abs"):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
 
         soft_stop_start = time.time()
@@ -77,21 +114,22 @@ class Controller:
         while time.time() - soft_stop_start < 0.2:
             soft_stop_control_start = time.time()
 
-            for robot_id in task_robot_ids:
-                self.robot[robot_id].tele_move(
-                    action=last_action[robot_id],
-                    mode=mode,
-                    vel_scale=CONTROL["vel_scale"], acc_scale=CONTROL["acc_scale"]
-                )
+            self.robot_cluster.tele_move(
+                action=last_action,
+                mode=mode,
+                vel_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+                acc_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+            )
 
             soft_stop_control_end = time.time()
             wait_time = control_period - (soft_stop_control_end - soft_stop_control_start)
             if wait_time > 0.:
                 time.sleep(wait_time)
 
-    def set_teleop(self, robot_id, mode="task_abs"):
+    @require_robot_id
+    def set_teleop(self, robot_id: int, mode: str = "task_abs"):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
-        assert robot_id in ROBOT_ID, f"Unavailable robot ID {robot_id}"
+        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
 
         time_limit = 10.  # sec
         start_time = time.time()
@@ -105,8 +143,9 @@ class Controller:
                 self.robot[robot_id].start_teleop(mode=mode)
                 time.sleep(0.2)
 
-    def set_no_teleop(self, robot_id):
-        assert robot_id in ROBOT_ID, f"Unavailable robot ID {robot_id}"
+    @require_robot_id
+    def set_no_teleop(self, robot_id: int):
+        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
 
         time_limit = 10.  # sec
         start_time = time.time()
@@ -119,8 +158,9 @@ class Controller:
                 self.robot[robot_id].stop_teleop()
                 time.sleep(0.2)
 
-    def set_recovery(self, robot_id):
-        assert robot_id in ROBOT_ID, f"Unavailable robot ID {robot_id}"
+    @require_robot_id
+    def set_recovery(self, robot_id: int):
+        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
 
         while True:
             op_state = self.robot[robot_id].get_state()["op_state"]
@@ -129,9 +169,10 @@ class Controller:
                 time.sleep(3.)
             else:
                 break
-
-    def set_idle(self, robot_id):
-        assert robot_id in ROBOT_ID, f"Unavailable robot ID {robot_id}"
+    
+    @require_robot_id
+    def set_idle(self, robot_id: int):
+        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
         
         robot_state = self.robot[robot_id].get_state()["op_state"]
         if robot_state == ROBOT_STATE.TELE_OP:
@@ -142,5 +183,44 @@ class Controller:
         elif ROBOT_STATE.in_failure_state(robot_state=robot_state):
             self.set_recovery(robot_id)
             time.sleep(0.1)
+            
+
+class Base_NN_controller(Controller):
+    def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
+        # set robot
+        super(Base_NN_controller, self).__init__(robot=robot, **kwargs)
+        
+        # set nn policy
+        self.nn_policy: Union[Empty_NN_policy] = Empty_NN_policy(robot_config=self.ROBOT_CONFIG, task_config=self.TASK_CONFIG)
+        
+    def load_policy(self):
+        raise NotImplementedError
+    
+    def exec_nn_control(self, duration: float):
+        raise NotImplementedError
+    
+    def exec_nn_control_stop(self):
+        raise NotImplementedError
+    
+    def exec_start_movement(self):
+        return None
+
+    def exec_finish_movement(self):
+        return None
 
 
+class Empty_NN_policy:
+    """
+    Policy without loaded weights
+    """
+    def __init__(self, robot_config: ROBOT_CONFIG, task_config: TASK_CONFIG):
+        self.robot_config = robot_config
+        self.task_config = task_config
+        self.n_robots = len(self.robot_config.robot_ids)
+        self.device = self.task_config.model_config.device
+
+    def reset(self):
+        pass
+
+    def __call__(self, **kwargs):
+        pass

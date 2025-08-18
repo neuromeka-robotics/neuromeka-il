@@ -1,5 +1,5 @@
+# base
 from typing import Dict
-
 import pickle
 from ruamel.yaml import YAML
 from enum import Enum
@@ -10,8 +10,9 @@ import numpy as np
 import torch
 import torchvision.transforms as transforms
 
-from config.model import POLICY
-
+# helper functions
+from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
+from helper.controller_utils import Empty_NN_policy
 from helper.math_utils import MathFunc
 from helper.extra_utils import NN_CONTROL_STATE
 
@@ -20,51 +21,36 @@ sys.path.append(os.path.join(match.group(1), "train"))
 from policies import ACTConfig, ACTPolicy
 from policies.selection import ControlMode
 
-class Empty_NN_policy:
-    """
-    Policy without loaded weights
-    """
 
-    def __init__(self, task):
-        self.task = task
-        self.n_robots = 0
-
-    def reset(self):
-        pass
-
-    def __call__(self, **kwargs):
-        pass
-
-
-class NN_policy:
+class NN_policy(Empty_NN_policy):
     """
     Policy with loaded weights
     """
-
-    def __init__(self, task_name, device='cuda'):
-        self.task_name = task_name
+    def __init__(self, robot_config: ROBOT_CONFIG, task_config: TASK_CONFIG):
+        super(NN_policy, self).__init__(robot_config=robot_config, task_config=task_config)
 
         # load policy config
         cfg: Dict[str, Dict] = YAML().load(
             open(
-                f'{POLICY[task_name]["model"]["directory"]}/{POLICY[task_name]["model"]["configuration"]}',
+                os.path.join(self.task_config.model_config.model_dir, "config.yaml"),
                 "r",
             )
         )
-        if POLICY[task_name]["model"]["type"] == "act":
+        
+        if self.task_config.model_config.model_type == "act":
             policy_config = ACTConfig(**cfg["policy"])
         else:
             raise NotImplementedError
 
-        # set crucial parameters
-        self.n_robots = policy_config.num_robots
+        # set parameters
+        assert self.n_robots == policy_config.num_robots, "Number of robots mismatch"
         self.n_obs_steps = policy_config.n_obs_steps
         self.action_update_count = policy_config.n_action_steps
         self.control_mode = policy_config.control_mode
 
         # load dataset statistics
         with open(
-            f'{POLICY[task_name]["model"]["directory"]}/{POLICY[task_name]["model"]["datastats"]}',
+            os.path.join(self.task_config.model_config.model_dir, "dataset_stats.pkl"),
             "rb",
         ) as f:
             policy_stats = pickle.load(f)
@@ -74,46 +60,35 @@ class NN_policy:
             policy_stats[k]["std"] = torch.from_numpy(policy_stats[k]["std"])
 
         # set image pre-processor
-        camera_names = []
-        candidate_words = ["observation.images", "observation.depths"]
-        for k in policy_config.input_shapes:
-            for candidate_word in candidate_words:
-                if k.startswith(candidate_word):
-                    camera_names.append(k.split(".")[-1])
-                    image_size = policy_config.input_shapes[
-                        f"{candidate_word}.{camera_names[0]}"
-                    ][
-                        -2:
-                    ]  # Assume same size for all images
-
+        candidate_word = "observation.images"
+        for key, value in policy_config.input_shapes.items():
+            if key.startswith(candidate_word):
+                image_size = value[-2:]  # Assume same size for all images
         self.image_resize = transforms.Resize(image_size)
+        
+        self.image_crop = dict()
         if cfg.get("extra") is not None and cfg["extra"].get("image_crop") is not None:
-            assert len(cfg["extra"]["image_crop"]) == 1, "Single camera only supported."
             for image_name, crop_area in cfg["extra"]["image_crop"].items():
-                self.image_crop = lambda img: img[
-                    :,
-                    crop_area[0][0] : crop_area[0][1],
-                    crop_area[1][0] : crop_area[1][1],
-                ]
-        else:
-            self.image_crop = None
+                self.image_crop[image_name] = \
+                    lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
 
         # load policy
-        if POLICY[task_name]["model"]["type"] == "act":
+        if self.task_config.model_config.model_type == "act":
             self.policy = ACTPolicy(policy_config, policy_stats)
         else:
             raise NotImplementedError
 
+        policy_weight_path = os.path.join(self.task_config.model_config.model_dir, self.task_config.model_config.model_file)
         self.policy.load_state_dict(
             torch.load(
-                f'{POLICY[task_name]["model"]["directory"]}/{POLICY[task_name]["model"]["weight"]}',
+                policy_weight_path,
                 weights_only=True,
             )
         )
-        self.policy.to(device)
+        self.policy.to(self.device)
         self.policy.eval()
         print(
-            f'Loaded (policy): {POLICY[task_name]["model"]["directory"]}/{POLICY[task_name]["model"]["weight"]}'
+            f"Loaded (policy): {policy_weight_path}"
         )
 
     def reset(self):
@@ -128,8 +103,20 @@ class NN_policy:
         qpos = args["qpos"].astype(np.float32)  # (n_joints * n_robots)
         qvel = args["qvel"].astype(np.float32)  # (n_joints * n_robots)
         end_pose = args["end_pos"].astype(np.float32)  # (6 * n_robots)
-        color_image = args["color_image"].astype(np.float32)  # (N_CAM, H, W, C)
+        end_vel = args["end_vel"].astype(np.float32)  # (6 * n_robots)
+        
+        cam_data_dict = dict()
+        for cam_name in self.task_config.camera_config.cam_names:
+            cam_data_dict[f"observation.images.rgb.{cam_name}"] = args[f"images.rgb.{cam_name}"].astype(np.float32)  # (H, W, C)
+            if args.get(f"images.depth.{cam_name}") is not None:
+                cam_data_dict[f"observation.images.depth.{cam_name}"] = args[f"images.depth.{cam_name}"][..., np.newaxis]  # (H, W, 1)
+                
+        # Image crop
+        for key in cam_data_dict.keys():
+            if self.image_crop.get(key) is not None:
+                cam_data_dict[key] = self.image_crop[key](cam_data_dict[key])
 
+        # Change unit
         qpos = MathFunc.degree_to_rad(qpos)
         qvel = MathFunc.degree_to_rad(qvel)
         end_pos = MathFunc.mm_to_m(end_pose[:3])
@@ -137,30 +124,33 @@ class NN_policy:
         end_ori = MathFunc.euler_to_rotMat(
             euler_x=end_ori[0], euler_y=end_ori[1], euler_z=end_ori[2]
         )
-        qpos_data = torch.from_numpy(qpos).unsqueeze(0)  # (B, 6 * n_robots)
-        qvel_data = torch.from_numpy(qvel).unsqueeze(0)  # (B, 6 * n_robots)
-
-        if self.image_crop is not None:
-            color_image = self.image_crop(color_image)
-        image_data = torch.from_numpy(color_image)
-        image_data = torch.einsum("k h w c -> k c h w", image_data)
-        image_data = self.image_resize(image_data)
-        image_data /= 255.0
-        image_data = image_data.unsqueeze(0)  # (B, N_CAM, C, H, W)
-        image_data = image_data[:, 0]  # TODO: Currently, HARDCODE for single camera  # (B, C, H, W)
+        end_linVel = MathFunc.mm_to_m(end_vel[:3])
+        end_angVel = MathFunc.degree_to_rad(end_vel[3:])
+        
+        # Pre-process
+        for key in cam_data_dict.keys():
+            image_data = torch.from_numpy(cam_data_dict[key])
+            image_data = torch.einsum('h w c -> c h w', image_data)
+            image_data = self.image_resize(image_data)
+            image_data /= 255.
+            cam_data_dict[key] = image_data.unsqueeze(0)  # (B, C, H, W)
 
         # prepare available data
         available_data = {
-            "observation.images.top": image_data,
-            "observation.qpos": qpos_data,
-            "observation.qvel": qvel_data,
+            "observation.qpos": torch.from_numpy(qpos).unsqueeze(0),
+            "observation.qvel": torch.from_numpy(qvel).unsqueeze(0),
+            "observation.end_position": torch.from_numpy(end_pos).unsqueeze(0),
+            "observation.end_orientation": torch.from_numpy(end_ori.reshape(-1)).unsqueeze(0),  # (B, 9)
+            "observation.end_linear_velocity": torch.from_numpy(end_linVel).unsqueeze(0),
+            "observation.end_angular_velocity": torch.from_numpy(end_angVel).unsqueeze(0),
+            **cam_data_dict
         }
 
         # select data from the available data that the policy requires
         batch_data_keys = list(self.policy.config.input_shapes.keys())
         batch_data = dict()
         for key in batch_data_keys:
-            batch_data[key] = available_data[key].cuda().contiguous()
+            batch_data[key] = available_data[key].to(self.device).contiguous()
 
         if len(self.policy._action_queue) == 0:
             self.init_relative_end_pos = end_pos
@@ -169,13 +159,16 @@ class NN_policy:
         # forward pass neural network
         output = self.policy.select_action(batch_data)  # (B, 12 * n_robots) or (B, (12 + 1) * n_robots)
         action = output["actions"].squeeze(0).cpu().numpy()
-        success_prob = output["success_probability"].squeeze(0).cpu().numpy().item()
+        if output["success_probability"] is None:
+            success_prob = 0.  # No success detector
+        else:
+            success_prob = output["success_probability"].squeeze(0).cpu().numpy().item()
 
-        # post-process output data
+        # post-process
         action_dict = dict()
         action_dict["action"] = action
 
-        if success_prob > POLICY[self.task_name]["deploy"].get("success_threshold", 1.):
+        if success_prob > self.task_config.model_config.success_threshold:
             action_dict["control_state"] = NN_CONTROL_STATE.TASK_FINISH
         else:
             action_dict["control_state"] = NN_CONTROL_STATE.TASK_IN_PROGRESS

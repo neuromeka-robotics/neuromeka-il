@@ -12,7 +12,8 @@ base:
 ### Train configuration
 train:
   num_epochs: 1000
-  batch_size: 8
+  batch_size: 128
+  success_detector_batch_size: 32
   lr: 1e-5
   lr_backbone: 1e-5
   weight_decay: 1e-4
@@ -32,7 +33,7 @@ policy:
   chunk_size: 20  # 1s
 
   input_shapes: 
-    observation.images.rgb.top: [3, 224, 224]
+    observation.images.rgb.wrist: [3, 224, 224]
     observation.qpos: [12] 
     observation.qvel: [12]
     observation.prev_gripper_command: [2]
@@ -47,7 +48,7 @@ policy:
   
   ## normalization/Unnormalization
   input_normalization_modes: 
-    observation.images.rgb.top: mean_std
+    observation.images.rgb.wrist: mean_std
     observation.qpos: mean_std
     observation.qvel: mean_std
 
@@ -80,4 +81,4 @@ policy:
 # # [Option] Can set image crop
 # extra:
 #   image_crop:
-#     observation.images.rgb.top: [[250, 450], [180, 450]]
+#     observation.images.rgb.wrist: [[250, 450], [180, 450]]

@@ -57,11 +57,11 @@ conda activate env_il
 ```
 Second, preprocess data. The preprocessed data will be saved under `processed_data`.
 ```
-python train/preprocess.py --task TASK_NAME
+python preprocess.py --task TASK_NAME
 ```
 Third, train neural networks.
 ```
-python train/imitate.py --config-path=train/config/CONFIG_DIRECTORY --config-name=CONFIG_FILE
+python imitate.py --config-path=config/CONFIG_DIRECTORY --config-name=CONFIG_FILE
 ```
 
 ### Usage examples
@@ -71,33 +71,33 @@ Before proceeding with the pipeline below, make sure that your SSD has at least 
 
 First, create and preprocess synthetic data. Four datasets (*test_single_robot*, *test_single_robot_gripper*, *test_dual_robot*, *test_dual_robot_gripper*) will be generated under `data` and `processed_data`.
 ```
-bash train/make_fake_data.sh
+bash make_fake_data.sh
 ```
 Then, train neural networks with example configurations.
 ```
 # Example 1: Single robot + Task space action
-python train/imitate.py --config-path=train/config/example --config-name=single_robot_task.yaml 
+python imitate.py --config-path=config/example --config-name=single_robot_task.yaml 
 
 # Example 2: Single robot + Relative delta task space action
-python train/imitate.py --config-path=train/config/example --config-name=single_robot_relative_delta.yaml
+python imitate.py --config-path=config/example --config-name=single_robot_relative_delta.yaml
 
 # Example 3: Single robot with gripper + Task space action
-python train/imitate.py --config-path=train/config/example --config-name=single_robot_gripper_task.yaml
+python imitate.py --config-path=config/example --config-name=single_robot_gripper_task.yaml
 
 # Example 4: Single robot with gripper + Relative delta task space action
-python train/imitate.py --config-path=train/config/example --config-name=single_robot_gripper_relative_delta.yaml
+python imitate.py --config-path=config/example --config-name=single_robot_gripper_relative_delta.yaml
 
 # Example 5: Dual robot + Task space action
-python train/imitate.py --config-path=train/config/example --config-name=dual_robot_task.yaml
+python imitate.py --config-path=config/example --config-name=dual_robot_task.yaml
 
 # Example 6: Dual robot + Relative delta task space action
-python train/imitate.py --config-path=train/config/example --config-name=dual_robot_relative_delta.yaml
+python imitate.py --config-path=config/example --config-name=dual_robot_relative_delta.yaml
 
 # Example 7: Dual robot with gripper + Task space action
-python train/imitate.py --config-path=train/config/example --config-name=dual_robot_gripper_task.yaml
+python imitate.py --config-path=config/example --config-name=dual_robot_gripper_task.yaml
 
 # Example 8: Dual robot with gripper + Relative delta task space action
-python train/imitate.py --config-path=train/config/example --config-name=dual_robot_gripper_relative_delta.yaml 
+python imitate.py --config-path=config/example --config-name=dual_robot_gripper_relative_delta.yaml 
 ```
 
 ### Training plot examples

@@ -15,10 +15,8 @@ Pre-process raw data in the format suitable for training.
 Follow TODO 1~3 to add new types of data.
 """
 
-N_FILTER_IDX = 0
-N_SUCCESS_IDX = 5
-# N_FILTER_IDX = 10  # 0.05s * 10 = 0.5s
-# N_SUCCESS_IDX = 6  # 0.05s * 6 = 0.3s
+N_FILTER_IDX = 10  # 0.05s * 10 = 0.5s
+N_SUCCESS_IDX = 6  # 0.05s * 6 = 0.3s
 
 
 class DataProcessor:
@@ -232,7 +230,7 @@ def get_parser():
     parser = argparse.ArgumentParser(description="Data processing")
     parser.add_argument("--task", required=True, type=str, help="Task name to process")
     parser.add_argument("--n_filter_idx", default=0, type=int, help="Remove first n_filter_idx")
-    parser.add_argument("--n_success_idx", default=0, type=int, help="Label last n_success_idx as success")
+    parser.add_argument("--n_success_idx", default=5, type=int, help="Label last n_success_idx as success")
     return parser
 
 def main(args):

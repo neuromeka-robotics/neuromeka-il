@@ -158,6 +158,7 @@ class ACTPolicy(nn.Module):
             batch["observation.images.depth"] = torch.stack([batch[k] for k in self.expected_depth_keys], dim=-4)
             if batch["observation.images.depth"].shape[-3] == 1:
                 batch["observation.images.depth"] = torch.repeat_interleave(batch["observation.images.depth"], repeats=3, dim=-3)
+        
         batch = self.normalize_targets(batch)
         cat_batch_state(batch)
         cat_batch_action(batch)

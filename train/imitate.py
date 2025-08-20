@@ -156,7 +156,7 @@ def train_bc(
         count = len(train_dataloader)
 
         for data in train_dataloader:
-            forward_dict, _ = forward_pass(data, policy, **kwargs)
+            forward_dict, _ = forward_pass(data, policy)
             loss = forward_dict["loss"]
             loss.backward()
             if grad_clip_norm is not None:
@@ -186,7 +186,7 @@ def train_bc(
             count = len(success_dataloader)
             
             for data in success_dataloader:
-                forward_dict, _ = forward_pass(data, policy, **kwargs)
+                forward_dict, _ = forward_pass(data, policy)
                 loss = forward_dict["success_loss"]
                 loss.backward()
                 if grad_clip_norm is not None:

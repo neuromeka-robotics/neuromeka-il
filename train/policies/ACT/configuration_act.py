@@ -37,7 +37,7 @@ class ACTConfig:
     
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
-            "observation.images.rgb.top": [3, 480, 640],
+            "observation.images.rgb.wrist": [3, 480, 640],
             "observation.qpos": [6],
             "observation.qvel": [6],
         }
@@ -54,7 +54,7 @@ class ACTConfig:
     # Normalization / Unnormalization
     input_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {
-            "observation.images.rgb.top": "mean_std",
+            "observation.images.rgb.wrist": "mean_std",
             "observation.qpos": "mean_std",
             "observation.qvel": "mean_std",
         }
@@ -141,7 +141,20 @@ class ACTConfig:
         if self.control_mode in ControlMode.get_candidate("task") and self.temporal_ensemble_momentum is not None:
             raise NotImplementedError("Task space control does not currently support temporal smoothing")
         
+        # Check success detector usage
         if "is_success" in self.output_shapes.keys():
             self.use_success_detector = True
         else:
             self.use_success_detector = False
+        
+        # Check all the image size are same
+        # All images should be resized to same size
+        default_img_shape = None
+        for name, input_shape in self.input_shapes.items():
+            if name.startswith("observation.images"):
+                current_img_shape = input_shape[-2:]
+            
+            if default_img_shape is None:
+                default_img_shape = current_img_shape
+            else:
+                assert default_img_shape == current_img_shape, f"All images should be resized to same size. {default_img_shape} != {current_img_shape}"

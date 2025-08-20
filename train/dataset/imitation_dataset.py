@@ -149,17 +149,26 @@ class ImageLoadDataset(torch.utils.data.Dataset):
         image_data /= 255.
             
         # Compute action labels for relative_delta task space control
-        current_end_pos_w = out_data["observation.end_position"]  # (T, 3 * num_robots)
-        current_end_ori_w = out_data["observation.end_orientation"].reshape(n_robots * 3, 3)
-        target_end_pos_w = out_data["action.end_pos"]  # (T, 3 * num_robots)
-        target_end_ori_w = out_data["action.end_ori"].reshape(self.action_horizon, n_robots * 3, 3)
-        out_data["action.relative_delta.end_pos"] = \
-            torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
-        out_data["action.relative_delta.end_ori"] = \
-            torch.bmm(
-                torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
-                target_end_ori_w).reshape(self.action_horizon, -1)
-        
+        for idx in range(n_robots):
+            current_end_pos_w = out_data["observation.end_position"][3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            current_end_ori_w = out_data["observation.end_orientation"][9 * idx : 9 * (idx + 1)].reshape(3, 3)
+            target_end_pos_w = out_data["action.end_pos"][:, 3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            target_end_ori_w = out_data["action.end_ori"][:, 9 * idx : 9 * (idx + 1)].reshape(self.action_horizon, 3, 3)
+            
+            relative_delta_end_pos = \
+                torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
+            relative_delta_end_ori = \
+                torch.bmm(
+                    torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
+                    target_end_ori_w).reshape(self.action_horizon, -1)
+
+            if idx == 0:
+                out_data["action.relative_delta.end_pos"] = relative_delta_end_pos
+                out_data["action.relative_delta.end_ori"] = relative_delta_end_ori
+            else:
+                out_data["action.relative_delta.end_pos"] = np.concatenate((out_data["action.relative_delta.end_pos"], relative_delta_end_pos), axis=-1)
+                out_data["action.relative_delta.end_ori"] = np.concatenate((out_data["action.relative_delta.end_ori"], relative_delta_end_ori), axis=-1)
+                
         # Set image
         for cam_idx, cam_name in enumerate(self.camera_names):
             out_data[f"observation.images.rgb.{cam_name}"] = image_data[cam_idx]
@@ -347,17 +356,27 @@ class SuccessLoadDataset(torch.utils.data.Dataset):
         image_data /= 255.
             
         # Compute action labels for relative_delta task space control
-        current_end_pos_w = out_data["observation.end_position"]  # (T, 3 * num_robots)
-        current_end_ori_w = out_data["observation.end_orientation"].reshape(n_robots * 3, 3)
-        target_end_pos_w = out_data["action.end_pos"]  # (T, 3 * num_robots)
-        target_end_ori_w = out_data["action.end_ori"].reshape(self.action_horizon, n_robots * 3, 3)
-        out_data["action.relative_delta.end_pos"] = \
-            torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
-        out_data["action.relative_delta.end_ori"] = \
-            torch.bmm(
-                torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
-                target_end_ori_w).reshape(self.action_horizon, -1)
+        for idx in range(n_robots):
+            current_end_pos_w = out_data["observation.end_position"][3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            current_end_ori_w = out_data["observation.end_orientation"][9 * idx : 9 * (idx + 1)].reshape(3, 3)
+            target_end_pos_w = out_data["action.end_pos"][:, 3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            target_end_ori_w = out_data["action.end_ori"][:, 9 * idx : 9 * (idx + 1)].reshape(self.action_horizon, 3, 3)
+            
+            relative_delta_end_pos = \
+                torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
+            relative_delta_end_ori = \
+                torch.bmm(
+                    torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
+                    target_end_ori_w).reshape(self.action_horizon, -1)
+
+            if idx == 0:
+                out_data["action.relative_delta.end_pos"] = relative_delta_end_pos
+                out_data["action.relative_delta.end_ori"] = relative_delta_end_ori
+            else:
+                out_data["action.relative_delta.end_pos"] = np.concatenate((out_data["action.relative_delta.end_pos"], relative_delta_end_pos), axis=-1)
+                out_data["action.relative_delta.end_ori"] = np.concatenate((out_data["action.relative_delta.end_ori"], relative_delta_end_ori), axis=-1)
         
+        # Set image
         for cam_idx, cam_name in enumerate(self.camera_names):
             out_data[f"observation.images.rgb.{cam_name}"] = image_data[cam_idx]
             if enable_depth:
@@ -541,7 +560,7 @@ def load_data(base_cfg: BaseConfig,
             norm_stats[data_key]["mean"] = running_stats[data_key].mean()
             norm_stats[data_key]["std"] = torch.clip(
                 running_stats[data_key].standard_deviation(), min=1e-5, max=np.inf)
-    
+            
     return image_dataloader, success_dataloader, norm_stats
 
 

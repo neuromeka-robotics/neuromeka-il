@@ -24,7 +24,7 @@ if __name__ == "__main__":
     robot_mode = args.robot
     
     # Constant
-    traj_len = 5  # Episode length
+    traj_len = 100  # Episode length
     n_data = 5  # Number of total episodes
     n_robot_joints = 6  # Number of joints in a single robot
     

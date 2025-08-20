@@ -1,9 +1,1 @@
-/data
-/processed_data
-/weights
-/wandb
-/outputs
 __pycache__/
-*.h5
-*.pkl
-*.mp4

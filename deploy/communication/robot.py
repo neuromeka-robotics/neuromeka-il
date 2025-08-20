@@ -3,6 +3,7 @@ import time
 import numpy as np
 from threading import Thread
 from collections import deque
+import importlib
 
 from neuromeka import IndyDCP3 as RobotClient
 from neuromeka import BlendingType, StopCategory
@@ -10,9 +11,24 @@ from neuromeka import BlendingType, StopCategory
 # helper functions
 from helper.extra_utils import ROBOT_CONTROL_MODE, ROBOT_STATE
 
+
 class Robot:
-    def __init__(self, robot_ip: str):
+    def __init__(self, robot_ip: str, gripper_config: Dict | None = None):
         self.robot_client = RobotClient(robot_ip=robot_ip)
+        
+        if gripper_config is not None and gripper_config["enable"]:
+            from communication.gripper import BaseGripperClient
+            
+            try:
+                module = importlib.import_module("communication.gripper")
+                GripperClient = getattr(module, gripper_config["type"])
+                self.gripper_client: BaseGripperClient = GripperClient(**gripper_config.get("params", {}))
+            except ModuleNotFoundError:
+                raise ValueError(f"No module found for communication.gripper") from None
+            except AttributeError:
+                raise ValueError(f"{gripper_config['type']} not found in communication.gripper") from None
+        else:
+            self.gripper_client = None
 
     def get_state(self) -> Dict:
         state = self.robot_client.get_robot_data()
@@ -121,9 +137,35 @@ class Robot:
             ik_return["success"] = False
         del ik_return["response"]
         return ik_return
+    
+    def get_gripper_state(self):
+        if self.gripper_client is None:
+            gripper_pos = 1.
+            grasp_state = False
+        else:
+            gripper_pos = self.gripper_client.gripper_pos
+            grasp_state = self.gripper_client.is_grasping
+            
+        return {
+            "gripper_pos": gripper_pos,
+            "grasp_state": grasp_state
+        }
+        
+    def move_gripper(self, mode: str, value: float):
+        if self.gripper_client is None:
+            return
+        
+        value = max(0, min(value, 1))
+        if mode == "thread":
+            self.gripper_client.MoveGripperWThread(gripper_value=value)
+        elif mode == "no_thread":
+            self.gripper_client.MoveGripperWOThread(gripper_value=value)
+        else:
+            raise ValueError
 
 
 class RobotCluster:
+    
     def __init__(self, robots: Dict[int, Robot]):
         self.robot_ids = list(robots.keys())
         self.robots = robots
@@ -187,3 +229,13 @@ class RobotCluster:
                 vel_scale=vel_scale[robot_id], acc_scale=acc_scale[robot_id],
                 **kwargs
             )
+
+    def get_gripper_state(self, robot_ids: List[int]):
+        state = dict()
+        for robot_id in robot_ids:
+            state[robot_id] = self.robots[robot_id].get_gripper_state()
+        return state
+    
+    def move_gripper(self, mode: str, value: Dict[int, float]):
+        for robot_id, pos in value.items():
+            self.robots[robot_id].move_gripper(mode=mode, value=pos)

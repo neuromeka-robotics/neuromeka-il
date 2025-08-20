@@ -19,7 +19,7 @@ from helper.extra_utils import NN_CONTROL_STATE
 match = re.search(r'(.*/neuromeka-il/)', os.path.abspath(__file__))
 sys.path.append(os.path.join(match.group(1), "train"))
 from policies import ACTConfig, ACTPolicy
-from policies.selection import ControlMode
+from policies.selection import ControlMode, GripperMode
 
 
 class NN_policy(Empty_NN_policy):
@@ -47,6 +47,11 @@ class NN_policy(Empty_NN_policy):
         self.n_obs_steps = policy_config.n_obs_steps
         self.action_update_count = policy_config.n_action_steps
         self.control_mode = policy_config.control_mode
+        self.gripper_mode = GripperMode.robot_mode_to_gripper_mode(policy_config.robot_mode)
+        if self.gripper_mode in [GripperMode.BINARY, GripperMode.CONTINUOUS]:
+            self.use_gripper = True
+        else:
+            self.use_gripper = False
 
         # load dataset statistics
         with open(
@@ -97,6 +102,10 @@ class NN_policy(Empty_NN_policy):
         # Used for relaitve transformation
         self.init_relative_end_pos = None
         self.init_relative_end_ori = None
+        
+        # Gripper
+        if self.use_gripper:
+            self.prev_gripper_cmd = torch.ones(self.n_robots).unsqueeze(0)  # (B, n_robots)
 
     def __call__(self, **args):
         # pre-process input data
@@ -110,6 +119,12 @@ class NN_policy(Empty_NN_policy):
             cam_data_dict[f"observation.images.rgb.{cam_name}"] = args[f"images.rgb.{cam_name}"].astype(np.float32)  # (H, W, C)
             if args.get(f"images.depth.{cam_name}") is not None:
                 cam_data_dict[f"observation.images.depth.{cam_name}"] = args[f"images.depth.{cam_name}"][..., np.newaxis]  # (H, W, 1)
+                
+        if self.use_gripper:  ###################
+            gripper_pos = args["gripper_pos"].astype(np.float32)  # (n_robots)
+            grasp_state = args["grasp_state"].astype(np.float32)  # (n_robots)
+            gripper_pos_data = torch.from_numpy(gripper_pos).unsqueeze(0)  # (B, n_robots)
+            grasp_state_data = torch.from_numpy(grasp_state).unsqueeze(0)  # (B, n_robots)
                 
         # Image crop
         for key in cam_data_dict.keys():
@@ -145,6 +160,10 @@ class NN_policy(Empty_NN_policy):
             "observation.end_angular_velocity": torch.from_numpy(end_angVel).unsqueeze(0),
             **cam_data_dict
         }
+        if self.use_gripper:
+            available_data["observation.gripper_position"] = gripper_pos_data
+            available_data["observation.grasp_state"] = grasp_state_data
+            available_data["observation.prev_gripper_command"] = self.prev_gripper_cmd
 
         # select data from the available data that the policy requires
         batch_data_keys = list(self.policy.config.input_shapes.keys())
@@ -190,5 +209,16 @@ class NN_policy(Empty_NN_policy):
             action_dict[f"robot_action_{robot_id}"] = np.concatenate(
                 (pos_action, euler_action), axis=-1
             )  # (6,)
+            
+        if self.use_gripper:
+            for robot_id in range(self.n_robots):
+                gripper_cmd = action[-(self.n_robots - robot_id)]
+                gripper_cmd = np.clip(gripper_cmd, a_min=0., a_max=1.)
+                
+                if self.gripper_mode == GripperMode.BINARY:
+                    gripper_cmd = np.round(gripper_cmd)  # 0 or 1
+
+                action_dict[f"gripper_action_{robot_id}"] = gripper_cmd
+                self.prev_gripper_cmd[:, robot_id] = gripper_cmd
 
         return action_dict

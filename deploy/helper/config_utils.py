@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict
+import os
 
 
 @dataclass
@@ -14,7 +15,10 @@ class ROBOT_CONFIG:
                 "home_pos": [-5.0032735, -20.997824, -84.92132, -0.020232247, -73.95311, -3.4574845],
                 "gripper": {
                     "enable": False,
-                    "type": "robotiq_2f85"
+                    "type": "RobotiqUSBClient",
+                    "params": {
+                        "port": "/dev/robotiq_2f85"
+                    }
                 },
                 "control": {
                     "vel_scale": 1.,  # 0 ~ 1
@@ -43,13 +47,6 @@ class ROBOT_CONFIG:
             assert "control" in self.robot_params[robot_id].keys()
             for control_param_type in ["vel_scale", "acc_scale", "move_vel_scale", "move_acc_scale"]:
                 assert control_param_type in self.robot_params[robot_id]["control"].keys()
-                
-        
-@dataclass
-class TASK_CONFIG:
-    name: str = "base"
-    camera_config: CAMERA_CONFIG | None = None
-    model_config: MODEL_CONFIG | None = None
 
 
 @dataclass
@@ -83,5 +80,29 @@ class MODEL_CONFIG:
         assert self.device in ["cpu", "cuda"], f"Unavailable device {self.device}"
     
 
+@dataclass
+class DATA_CONFIG:
+    data_dir: str =  f"{os.path.dirname(os.path.abspath(__file__))}/../../train/data",
+    data_viz_dir: str =  f"{os.path.dirname(os.path.abspath(__file__))}/../../train/data_viz"
+    
+    device_type: str = "vive"
+    device_params: Dict = field(
+        default_factory=lambda: {
+            "calib_uvw": [-1.5413670975757867, 3.1056404500490942, 1.1692256106471774]
+        }
+    )
+    
+    def __post_init__(self):
+        assert self.device_type in ["vive"], f"Unavailable device {self.device_type}"
+
+
+@dataclass
+class TASK_CONFIG:
+    name: str = "base"
+    camera_config: CAMERA_CONFIG | None = None
+    model_config: MODEL_CONFIG | None = None
+    data_config: DATA_CONFIG | None = None
+    
+    
 BASE_ROBOT_CONFIG = ROBOT_CONFIG()
 BASE_TASK_CONFIG = TASK_CONFIG()

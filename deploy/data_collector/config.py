@@ -2,7 +2,7 @@ import os
 from helper.config_utils import *
 
 
-CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
+DATA_COLLECTOR_ROBOT_CONFIG = ROBOT_CONFIG(
     robot_params = {
         0: {
             "ip": "192.168.0.135",
@@ -17,8 +17,8 @@ CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
             "control": {
                 "vel_scale": 1.,  # 0 ~ 1
                 "acc_scale": 10.,  # 0 ~ 10
-                "move_vel_scale": 20.,  # 0 ~ 100
-                "move_acc_scale": 20.  # 0 ~ 1000
+                "move_vel_scale": 50.,  # 0 ~ 100
+                "move_acc_scale": 50.  # 0 ~ 1000
             }
         }
     },
@@ -26,8 +26,8 @@ CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
     control_dt = 0.05
 )
 
-CUSTOM_TASK_CONFIG = TASK_CONFIG(
-    name = os.path.abspath(__file__).split("/")[-2],  # Name of the folder. In current example, "act_il"
+DATA_COLLECTOR_TASK_CONFIG = TASK_CONFIG(
+    name = "pick_and_place",  # Task name to collect data
     
     camera_config = CAMERA_CONFIG(
         cam_params = {
@@ -44,11 +44,10 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         }
     ),
     
-    model_config = MODEL_CONFIG(
-        model_type = "act",
-        model_dir = "/GLOBAL/PATH/TO/MODEL/DIRECTORY",
-        model_file = "policy_last.ckpt",
-        success_threshold = 0.5,
-        device = "cuda"
+    data_config = DATA_CONFIG(
+        device_type = "vive",
+        device_params = {
+            "calib_uvw": [-1.5413670975757867, 3.1056404500490942, 1.1692256106471774]
+        }
     )
 )

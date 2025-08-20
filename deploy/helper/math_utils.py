@@ -211,3 +211,45 @@ class MathFunc:
         quat_diff = MathFunc.quat_mul(q1, MathFunc.quat_conjugate(q2))
         return np.linalg.norm(MathFunc.quat_to_axis_angle(quat_diff))
 
+
+class TaskControlTransformation:
+    def __init__(self, fixed_robot_to_fixed_device_euler):
+        """
+        Fixed robot frame : R
+        Initial robot end frame : r
+        Current robot end frame : r_
+        Fixed device frame : V
+        Initial device frame : v
+        Current device frame : v_
+        """
+        self.R_RV = MathFunc.euler_to_rotMat(
+            fixed_robot_to_fixed_device_euler[0], fixed_robot_to_fixed_device_euler[1], fixed_robot_to_fixed_device_euler[2])
+        self.reset()
+        
+    def reset(self):
+        self.init_device = SE3()  # P_Vv, R_Vv
+        self.current_device = SE3()  # P_Vv_, R_Vv_
+        self.init_robot_end = SE3()  # P_Rr, R_Rr
+        self.current_robot_end = SE3()  # P_Rr_, R_Rr_
+
+    def apply(self):
+        P_vv__in_R = self.R_RV @ (self.current_device.pos - self.init_device.pos)
+        R_Rv = self.R_RV @ self.init_device.rot
+        R_Rv_ = self.R_RV @ self.current_device.rot
+        R_Rv_Rv = R_Rv_ @ R_Rv.T
+
+        self.current_robot_end.pos = self.init_robot_end.pos + P_vv__in_R
+        self.current_robot_end.rot = R_Rv_Rv @ self.init_robot_end.rot
+
+        # compute control input
+        current_robot_end_euler = MathFunc.rotMat_to_euler(self.current_robot_end.rot) * 180 / np.pi  # rad -> degree
+        return self.current_robot_end.pos.tolist() + current_robot_end_euler.tolist()
+    
+    def is_feasible(self):
+        return True
+    
+    
+class SE3:
+    def __init__(self):
+        self.pos = np.zeros(3, dtype=np.float32)
+        self.rot = np.identity(3, dtype=np.float32)

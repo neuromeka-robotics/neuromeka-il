@@ -280,3 +280,93 @@ def update_pbar(pbar, forward_dict: Dict[str, float]):
         loss_dict[k] = round(float(v), 2)
     pbar.set_postfix(**loss_dict)
     pbar.update(1)
+
+
+class TorchRunningStats:
+    def __init__(self, shape, device="cpu"):
+        self.shape = shape
+        self.device = device
+        self.reset()
+        
+    def reset(self):
+        self.n = torch.zeros(self.shape, dtype=torch.float, device=self.device)
+        self.mu = torch.zeros(self.shape, dtype=torch.float, device=self.device)
+        self.M2 = torch.zeros(self.shape, dtype=torch.float, device=self.device)
+
+    def update(self, data):
+        """
+        data: (*shape,)
+        """
+        self.n += 1
+        delta = data - self.mu
+        self.mu += delta / self.n
+        delta2 = data - self.mu
+        self.M2 += delta * delta2
+        
+    def batch_update(self, batch_data):
+        """
+        batch_data: (B, *shape,)
+        """
+        B = batch_data.shape[0]
+        batch_data = batch_data.to(self.device)
+
+        batch_mean = batch_data.mean(dim=0)
+        batch_M2 = ((batch_data - batch_mean) ** 2).sum(dim=0)
+
+        batch_n = torch.tensor(B, dtype=torch.float, device=self.device)
+        total_n = self.n + batch_n
+
+        delta = batch_mean - self.mu
+        new_mu = self.mu + delta * (batch_n / total_n)
+        new_M2 = self.M2 + batch_M2 + delta ** 2 * self.n * batch_n / total_n
+
+        self.mu = new_mu
+        self.M2 = new_M2
+        self.n = total_n
+        
+    def count(self):
+        return self.n
+
+    def mean(self):
+        return torch.where(self.n != 0, self.mu, 0.0)
+
+    def variance(self):
+        return torch.where(self.n > 1, self.M2 / (self.n - 1), 0.0)
+
+    def standard_deviation(self):
+        return torch.sqrt(self.variance())
+    
+    
+if __name__ == "__main__":
+    n_data = 4000
+    n_batch = 100
+    shape = (20, 3, 3)
+    running_stats = TorchRunningStats(shape=shape)
+    
+    # Random data
+    data_stream = torch.randn(size=(n_data, *shape))
+    true_mean = torch.mean(data_stream, dim=0)
+    true_std = torch.std(data_stream, dim=0)
+
+    print("Single update test")
+    running_stats.reset()
+    for t in range(n_data):
+        running_stats.update(data_stream[t])
+
+    computed_mean = running_stats.mean()
+    computed_std = running_stats.standard_deviation()
+    print(f"Count: {torch.norm(running_stats.count() - n_data) < 1e-3}")
+    print(f"Mean: {torch.norm(running_stats.mean() - true_mean) < 1e-3}")
+    print(f"Std: {torch.norm(running_stats.standard_deviation() - true_std) < 1e-3}")
+    print("======")
+    
+    print("Batch update test")
+    running_stats.reset()
+    for i in range(0, n_data, n_batch):
+        running_stats.batch_update(data_stream[i:i + n_batch])
+    
+    computed_mean = running_stats.mean()
+    computed_std = running_stats.standard_deviation()
+    print(f"Count: {torch.norm(running_stats.count() - n_data) < 1e-3}")
+    print(f"Mean: {torch.norm(running_stats.mean() - true_mean) < 1e-3}")
+    print(f"Std: {torch.norm(running_stats.standard_deviation() - true_std) < 1e-3}")

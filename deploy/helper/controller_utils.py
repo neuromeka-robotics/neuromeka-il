@@ -10,6 +10,7 @@ from helper.extra_utils import ROBOT_STATE
 from communication.robot import Robot, RobotCluster
 
 # config
+from helper.extra_utils import NN_CONTROL_STATE
 from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG, BASE_ROBOT_CONFIG, BASE_TASK_CONFIG
 
 
@@ -36,8 +37,12 @@ class Controller:
                 assert isinstance(self.robot[robot_id], Robot), f"Wrong robot instance for id {robot_id}"
         else:
             for robot_id in self.ROBOT_IDS:
-                self.robot[robot_id] = Robot(robot_ip=self.ROBOT_CONFIG.robot_params[robot_id]["ip"])
+                self.robot[robot_id] = Robot(
+                    robot_ip=self.ROBOT_CONFIG.robot_params[robot_id]["ip"], 
+                    gripper_config=self.ROBOT_CONFIG.robot_params[robot_id].get("gripper", None))
+                
         self.robot_cluster = RobotCluster(robots=self.robot)
+        self.exec_set_idle()
 
     @require_robot_id
     def exec_home_pos(self, wait=False):
@@ -207,6 +212,10 @@ class Base_NN_controller(Controller):
 
     def exec_finish_movement(self):
         return None
+    
+    def _reset_control(self):
+        self.nn_policy.reset()
+        self.control_state = NN_CONTROL_STATE.TASK_IN_PROGRESS
 
 
 class Empty_NN_policy:

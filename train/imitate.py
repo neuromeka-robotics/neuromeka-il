@@ -7,11 +7,11 @@ import pickle
 from tqdm import tqdm
 import ntpath
 from shutil import copyfile
-
 import numpy as np
 import torch
+import json
 
-from dataset.imitation_dataset import load_data
+from dataset.imitation_dataset import load_data, load_dagger_validation_data
 from config.configuration_base import BaseConfig
 from policies import ACTConfig
 from policies import ACTPolicy
@@ -78,6 +78,8 @@ def forward_pass(data: Dict[str, torch.tensor],
     Forward pass the policy and compute loss
     """
     batch_data_keys = list(policy.config.input_shapes.keys()) + list(policy.config.output_shapes.keys())
+    batch_data_keys.append("is_pad")
+    
     batch_data = {}
     for key in batch_data_keys:
         batch_data[key] = data[key].cuda()
@@ -87,6 +89,7 @@ def train_bc(
     config: BaseConfig, 
     train_config: Dict[str, Any], 
     train_dataloader, 
+    success_dataloader,
     policy: torch.nn.Module, 
     optimizer: torch.optim.Optimizer, 
     lr_scheduler: torch.optim.lr_scheduler.LRScheduler,
@@ -98,17 +101,60 @@ def train_bc(
     # Set progress bar
     pbar = tqdm(total=train_config["num_epochs"])
     
+    # Initialize for DAGGER validation
+    if config.dagger_mode:
+        dagger_dataloaders = kwargs["dagger_dataloaders"]
+    
     # Start training
     policy.train()
     grad_clip_norm = train_config.get("grad_clip_norm")
 
     for epoch in range(train_config["num_epochs"]):
-        # Save model
+        # Save and validate
         if epoch % 10 == 0:
-            ckpt_path = os.path.join(config.ckpt_dir, "policy_last.ckpt")
+            # Save model
+            if config.dagger_mode:
+                collect_iter = len(dagger_dataloaders) - 1
+                ckpt_path = os.path.join(config.ckpt_dir, f"policy_dagger_{collect_iter}.ckpt")
+            else:
+                ckpt_path = os.path.join(config.ckpt_dir, "policy_last.ckpt")
             torch.save(policy.state_dict(), ckpt_path)
                 
+            # Validate model(loss for DAGGER)
+            if config.dagger_mode:
+                policy.eval()
+
+                dagger_eval_summary = dict()
+                for subset_idx, subset_dataloader in enumerate(dagger_dataloaders):
+                    loss = dict()
+                    count = 0
+                    
+                    for data in subset_dataloader:
+                        with torch.no_grad():
+                            forward_dict, _ = forward_pass(data, policy)
+
+                        for key, value in forward_dict.items():
+                            if key == "loss":
+                                value = value.item()
+                            if loss.get(key) is None:
+                                loss[key] = value
+                            else:
+                                loss[key] += value
+
+                        count += 1
+
+                    for key, value in loss.items():
+                        dagger_eval_summary[f"{key}_{subset_idx}"] = value / count
+                
+                if config.logging:
+                    train_logger.store_log(dagger_eval_summary, name="Dagger")
+                    
+                policy.train()
+                
         # Train model
+        iter_summary = dict()
+        count = len(train_dataloader)
+
         for data in train_dataloader:
             forward_dict, _ = forward_pass(data, policy, **kwargs)
             loss = forward_dict["loss"]
@@ -121,20 +167,47 @@ def train_bc(
             if lr_scheduler is not None:
                 lr_scheduler.step()
 
-            iter_summary = detach_dict(forward_dict)
+            forward_dict = detach_dict(forward_dict)
             
-            # Update logger
-            if config.logging:
-                train_logger.store_log(iter_summary)
-            iter_summary["epoch"] = epoch
-                     
+            for key, value in forward_dict.items():
+                if iter_summary.get(key) is None:
+                    iter_summary[key] = value
+                else:
+                    iter_summary[key] += value
+            
+        if config.logging:
+            for key in iter_summary.keys():
+                iter_summary[key] = iter_summary[key] / count
+                
+            train_logger.store_log(iter_summary)
+            
+        # Train success detector
+        if success_dataloader is not None and epoch >= 0:
+            count = len(success_dataloader)
+            
+            for data in success_dataloader:
+                forward_dict, _ = forward_pass(data, policy, **kwargs)
+                loss = forward_dict["success_loss"]
+                loss.backward()
+                if grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip_norm, error_if_nonfinite=False)
+                optimizer.step()
+                optimizer.zero_grad()
+                
+                forward_dict = detach_dict(forward_dict)
+
         # Update monitoring metrics
-        update_pbar(pbar, iter_summary)
+        update_pbar(pbar, {"epoch": epoch, "loss": iter_summary["loss"]})
     
     # Conclude training
-    ckpt_path = os.path.join(config.ckpt_dir, "policy_last.ckpt")
+    if config.dagger_mode:
+        collect_iter = len(dagger_dataloaders) - 1
+        ckpt_path = os.path.join(config.ckpt_dir, f"policy_dagger_{collect_iter}.ckpt")
+    else:
+        ckpt_path = os.path.join(config.ckpt_dir, "policy_last.ckpt")
     torch.save(policy.state_dict(), ckpt_path)
     pbar.close()
+
 
 @hydra.main(version_base=None, config_path="config", config_name="configuration.yaml")
 def main(cfg):
@@ -142,21 +215,14 @@ def main(cfg):
     base_config = BaseConfig(**cfg["base"])
     if base_config.policy_class == "act":
         policy_config = ACTConfig(**cfg['policy'])
-
-        img_key_names = [k for k in policy_config.input_shapes if k.startswith("observation.images")]
-        camera_names = []
-        candidate_words = ["observation.images"]
-        for k in policy_config.input_shapes:
-            for candidate_word in candidate_words:
-                if k.startswith(candidate_word):
-                    camera_names.append(k.split(".")[-1])
-                    image_size = policy_config.input_shapes[f"{candidate_word}.{camera_names[0]}"][-2:]  # Assume same size for all images
-
-        camera_names = list(set(camera_names))  # Remove duplicates, Assume camera name is same for image
+        rgb_key_names = [k for k in policy_config.input_shapes if k.startswith("observation.images.rgb")]
+        camera_names = list(set([k.split(".")[-1] for k in policy_config.input_shapes if k.startswith("observation.images")]))
+        image_size = policy_config.input_shapes[f"observation.images.rgb.{camera_names[0]}"][-2:]  # Assume same size for all images
         action_horizon = policy_config.chunk_size
         vision_backbone = policy_config.vision_backbone
     else:
         raise ValueError
+    
     train_config = cfg["train"]
     extra_config = cfg["extra"] if "extra" in cfg.keys() else {}
     
@@ -165,16 +231,30 @@ def main(cfg):
     
     # Set dataloader and compute dataset statistics
     compute_relative_delta_norm = (policy_config.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE)
-    train_dataloader, stats = load_data(
+    image_dataloader, success_dataloader, stats = load_data(
         base_cfg=base_config,
         train_config=train_config,
         camera_names=camera_names,
         image_size=image_size,
         action_horizon=action_horizon,
         compute_relative_delta_norm=compute_relative_delta_norm,
+        use_success_detector=policy_config.use_success_detector,
         **extra_config
     )
-    stats = build_stats(stats, vision_backbone, img_key_names)
+    stats = build_stats(stats, vision_backbone, rgb_key_names)
+    
+    # Set DAGGER dataloader
+    if base_config.dagger_mode:
+        dagger_dataloaders = load_dagger_validation_data(
+            base_cfg=base_config, 
+            train_config=train_config, 
+            camera_names=camera_names, 
+            image_size=image_size, 
+            action_horizon=action_horizon,
+            **extra_config
+        )
+    else:
+        dagger_dataloaders = None
 
     # Save dataset statistics and critical files
     check_dir(base_config.ckpt_dir, generate=True)
@@ -190,6 +270,16 @@ def main(cfg):
             stats[k]["mean"] = torch.from_numpy(stats_np[k]["mean"])
             stats[k]["std"] = torch.from_numpy(stats_np[k]["std"])
         print(f"Loaded stats: {pretrained_stats_path}")
+    elif base_config.dagger_mode:
+        # Load initial statistics
+        stats_path = os.path.join(base_config.ckpt_dir, "dataset_stats.pkl")
+        with open(stats_path, "rb") as f:
+            stats_np = pickle.load(f)
+        
+        for k in stats_np.keys():
+            stats[k]["mean"] = torch.from_numpy(stats_np[k]["mean"])
+            stats[k]["std"] = torch.from_numpy(stats_np[k]["std"])
+        print(f"Loaded stats: {stats_path}")
     else:
         # Set statistics of current dataset
         stats_np = {}
@@ -198,9 +288,9 @@ def main(cfg):
             stats_np[key]["mean"] = stats[key]["mean"].numpy()
             stats_np[key]["std"] = stats[key]["std"].numpy()
             
-    stats_path = os.path.join(base_config.ckpt_dir, "dataset_stats.pkl")
-    with open(stats_path, 'wb') as f:
-        pickle.dump(stats_np, f)
+        stats_path = os.path.join(base_config.ckpt_dir, "dataset_stats.pkl")
+        with open(stats_path, 'wb') as f:
+            pickle.dump(stats_np, f)
         
     given_config_file = HydraConfig.get().job.config_name
     overrided_config_path = os.path.join(HydraConfig.get().runtime.output_dir, '.hydra', 'config.yaml')
@@ -214,7 +304,25 @@ def main(cfg):
     policy = make_policy(policy_config, base_config.policy_class, stats)
     
     # Load pre-trained model
-    if base_config.pretrained_ckpt_dir is not None:
+    if base_config.dagger_mode:
+        collect_progress_file = f"{base_config.dataset_dir}/../{base_config.task_name}_progress.json"
+        assert os.path.exists(collect_progress_file), "Dagger progress file does not exist"
+        with open(collect_progress_file, "r") as f:
+            collect_progress = json.load(f)
+            
+        collect_iters = []
+        for k, v in collect_progress.items():
+            collect_iters.append(int(k.split("_")[-1]))
+        collect_iter = max(collect_iters)
+        
+        if collect_iter == 1:
+            pretrained_ckpt_path = os.path.join(base_config.ckpt_dir, "policy_last.ckpt")
+        else:  # collect_iter > 1
+            pretrained_ckpt_path = os.path.join(base_config.ckpt_dir, f"policy_dagger_{collect_iter - 1}.ckpt")
+            
+        policy.load_state_dict(torch.load(pretrained_ckpt_path, weights_only=True))
+        print(f"Loaded model: {pretrained_ckpt_path}")
+    elif base_config.pretrained_ckpt_dir is not None:
         pretrained_ckpt_path = os.path.join(base_config.pretrained_ckpt_dir, "policy_last.ckpt")
         policy.load_state_dict(torch.load(pretrained_ckpt_path, weights_only=True))
         print(f"Loaded model: {pretrained_ckpt_path}")
@@ -226,10 +334,12 @@ def main(cfg):
     train_bc(
         config=base_config, 
         train_config=train_config, 
-        train_dataloader=train_dataloader, 
+        train_dataloader=image_dataloader, 
+        success_dataloader=success_dataloader,
         policy=policy, 
         optimizer=optimizer, 
         lr_scheduler=lr_scheduler, 
+        dagger_dataloaders=dagger_dataloaders
     )
 
 

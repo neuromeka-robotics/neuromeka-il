@@ -76,7 +76,8 @@ class ACTPolicy(nn.Module):
 
         self.model = ACT(config)
 
-        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.images")]
+        self.expected_image_keys = [k for k in config.input_shapes if k.startswith("observation.images.rgb")]
+        self.expected_depth_keys = [k for k in config.input_shapes if k.startswith("observation.images.depth")]
 
         self.reset()
 
@@ -99,44 +100,17 @@ class ACTPolicy(nn.Module):
 
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
-            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+            batch["observation.images.rgb"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        if len(self.expected_depth_keys) > 0:
+            batch["observation.images.depth"] = torch.stack([batch[k] for k in self.expected_depth_keys], dim=-4)
+            if batch["observation.images.depth"].shape[-3] == 1:
+                batch["observation.images.depth"] = torch.repeat_interleave(batch["observation.images.depth"], repeats=3, dim=-3)
         cat_batch_state(batch)  # inplace operation
 
         # If we are doing temporal ensembling, keep track of the exponential moving average (EMA), and return
         # the first action.
         if self.config.temporal_ensemble_momentum is not None:
-            output = self.model(batch)[0]  # (batch_size, chunk_size, action_dim)
-            actions = output["actions"]
-            if self.config.use_success_detector:
-                success_prob = output["success_probability"][:, 0]  # (B,) Only use first step
-            else:
-                success_prob = torch.zeros_like(actions[:, 0, 0])
-            
-            # Unnormalize action
-            # Action order assumption
-            # (1) Task space: (pos1 + pos2 + ..) + (rot1 + rot2 + ..) + (gripper1 + gripper2 + ..)
-            if self.config.control_mode in ControlMode.get_candidate("task"):
-                key = ControlMode.mode_to_action_name(self.config.control_mode)
-                actions[:, :, :3 * self.config.num_robots] \
-                    = self.unnormalize_outputs({key["pos"]: actions[:, :, :3 * self.config.num_robots]})[key["pos"]]
-            else:
-                actions = self.unnormalize_outputs({"action": actions})["action"]
-            
-            if self._ensembled_actions is None:
-                # Initializes `self._ensembled_action` to the sequence of actions predicted during the first
-                # time step of the episode.
-                self._ensembled_actions = actions.clone()
-            else:
-                # self._ensembled_actions will have shape (batch_size, chunk_size - 1, action_dim). Compute
-                # the EMA update for those entries.
-                alpha = self.config.temporal_ensemble_momentum
-                self._ensembled_actions = alpha * self._ensembled_actions + (1 - alpha) * actions[:, :-1]
-                # The last action, which has no prior moving average, needs to get concatenated onto the end.
-                self._ensembled_actions = torch.cat([self._ensembled_actions, actions[:, -1:]], dim=1)
-            
-            # "Consume" the first action.
-            action, self._ensembled_actions = self._ensembled_actions[:, 0], self._ensembled_actions[:, 1:]
-            return {"actions": action, "success_probability": success_prob}
+            raise NotImplementedError
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
@@ -145,9 +119,9 @@ class ACTPolicy(nn.Module):
             output = self.model(batch)[0]
             actions = output["actions"]
             if self.config.use_success_detector:
-                self._success_prob = output["success_probability"][:, 0]  # (B,) Only use first step
+                self._success_prob = output["success_probability"]  # (B,)
             else:
-                self._success_prob = torch.zeros_like(actions[:, 0, 0])
+                self._success_prob = None
             
             # apply orthogonalization of task space control
             if self.config.control_mode in ControlMode.get_candidate("task"):
@@ -156,7 +130,7 @@ class ACTPolicy(nn.Module):
                 if self.config.robot_mode in [RobotMode.SINGLE_ROBOT, RobotMode.DUAL_ROBOT]:
                     actions = pos_rot_hat
                 else:
-                    extra_action_hat = actions[:, :, (3 + 6) * self.config.num_robots:]  # gripper, control dt, success
+                    extra_action_hat = actions[:, :, (3 + 6) * self.config.num_robots:]  # gripper, success
                     actions = torch.concat((pos_rot_hat, extra_action_hat), dim=-1)
 
             # Unnormalize action
@@ -179,7 +153,11 @@ class ACTPolicy(nn.Module):
         # Normalize and concat observation
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
-            batch["observation.images"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+            batch["observation.images.rgb"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
+        if len(self.expected_depth_keys) > 0:
+            batch["observation.images.depth"] = torch.stack([batch[k] for k in self.expected_depth_keys], dim=-4)
+            if batch["observation.images.depth"].shape[-3] == 1:
+                batch["observation.images.depth"] = torch.repeat_interleave(batch["observation.images.depth"], repeats=3, dim=-3)
         batch = self.normalize_targets(batch)
         cat_batch_state(batch)
         cat_batch_action(batch)
@@ -203,7 +181,7 @@ class ACTPolicy(nn.Module):
         # l1_loss = (
         #     F.l1_loss(actions_hat, batch["action"], reduction="none") * ~batch["is_pad"].unsqueeze(-1)
         # ).mean()
-        l1_loss = F.l1_loss(actions_hat, batch["action"], reduction="mean")  # This was more stable during the robot execution test compared to above
+        l1_loss = F.l1_loss(actions_hat, batch["action"], reduction="mean")
 
         loss_dict = {"l1_loss": l1_loss.item(), "loss": l1_loss}
         if self.config.use_vae:
@@ -218,9 +196,19 @@ class ACTPolicy(nn.Module):
             loss_dict["loss"] = loss_dict["loss"] + mean_kld * self.config.kl_weight
 
         if self.config.use_success_detector:
-            success_loss = F.binary_cross_entropy(success_prob_hat, batch["is_pad"].to(torch.float32), reduction='mean')
-            loss_dict["success_loss"] = success_loss.item()
-            loss_dict["loss"] = loss_dict["loss"] + success_loss
+            success_loss = F.binary_cross_entropy(success_prob_hat, batch["is_success"].to(torch.float32), reduction='mean')
+            loss_dict["success_loss"] = success_loss
+            
+            prediction = success_prob_hat > 0.5
+            ground_truth = batch["is_success"].to(torch.bool)
+
+            TP = torch.sum(torch.logical_and(ground_truth, prediction))
+            # FP = torch.sum(torch.logical_and(torch.logical_not(ground_truth), prediction))
+            # FN = torch.sum(torch.logical_and(ground_truth, torch.logical_not(prediction)))
+            TN = torch.sum(torch.logical_and(torch.logical_not(ground_truth), torch.logical_not(prediction)))
+            loss_dict["[SR] Accuracy"] = (TP + TN) / batch["is_success"].shape[0]
+            # loss_dict["[SR] Max prob"] = torch.max(success_prob_hat).item()
+            # loss_dict["[SR] Min prob"] = torch.min(success_prob_hat).item()
 
         return loss_dict, actions_hat
 
@@ -272,6 +260,15 @@ class ACT(nn.Module):
                                     if "observation" in k and "image" not in k)
         self.use_input_state = input_state_shape > 0
         # print(f'input_shape: {input_state_shape}')
+        
+        self.use_image = False
+        self.use_depth = False
+        for k in config.input_shapes:
+            if not self.use_image and k.startswith("observation.images.rgb"):
+                self.use_image = True
+            if not self.use_depth and k.startswith("observation.images.depth"):
+                self.use_depth = True 
+        assert self.use_image or self.use_depth, "Either image or depth must be used."
 
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
@@ -298,14 +295,25 @@ class ACT(nn.Module):
             )
 
         # Backbone for image feature extraction.
-        backbone_model = getattr(torchvision.models, config.vision_backbone)(
-            replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-            weights="ResNet18_Weights.IMAGENET1K_V1",
-            norm_layer=FrozenBatchNorm2d,
-        )
-        self.img_backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
-        self.call_img_backbone = lambda image: self.img_backbone(image)["feature_map"]
-        image_feat_dim = backbone_model.fc.in_features
+        if self.use_image:
+            backbone_model = getattr(torchvision.models, config.vision_backbone)(
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
+                weights="ResNet18_Weights.IMAGENET1K_V1",
+                norm_layer=FrozenBatchNorm2d,
+            )
+            self.img_backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            self.call_img_backbone = lambda image: self.img_backbone(image)["feature_map"]
+            image_feat_dim = backbone_model.fc.in_features
+        
+        if self.use_depth:
+            backbone_model = getattr(torchvision.models, config.vision_backbone)(
+                replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
+                weights=None,
+                norm_layer=FrozenBatchNorm2d,
+            )
+            self.depth_backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
+            self.call_depth_backbone = lambda image: self.depth_backbone(image)["feature_map"]
+            depth_feat_dim = backbone_model.fc.in_features
         
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
@@ -319,9 +327,14 @@ class ACT(nn.Module):
             )
         self.encoder_latent_input_proj = nn.Linear(config.latent_dim, config.dim_model)
 
-        self.encoder_img_feat_input_proj = nn.Conv2d(
-            image_feat_dim, config.dim_model, kernel_size=1
-        )
+        if self.use_image:
+            self.encoder_img_feat_input_proj = nn.Conv2d(
+                image_feat_dim, config.dim_model, kernel_size=1
+            )
+        if self.use_depth:
+            self.encoder_depth_feat_input_proj = nn.Conv2d(
+                depth_feat_dim, config.dim_model, kernel_size=1
+            )
         # Transformer encoder positional embeddings.
         num_input_token_decoder = 2 if self.use_input_state else 1
         self.encoder_robot_and_latent_pos_embed = nn.Embedding(num_input_token_decoder, config.dim_model)
@@ -339,12 +352,12 @@ class ACT(nn.Module):
         self._reset_parameters()
 
         if config.use_success_detector:
-            self.is_pad_head = nn.Sequential(
-                nn.Linear(config.dim_model, config.output_shapes["is_pad"][0]),
+            self.success_detector = ACTDecoder(config)
+            self.success_detector_pos_embed = nn.Embedding(1, config.dim_model)
+            self.success_head = nn.Sequential(
+                nn.Linear(config.dim_model, 1),
                 nn.Sigmoid()
             )
-            # # Initialize w/ small weights because most of the labels are 0
-            # nn.init.normal_(self.is_pad_head[0].weight, mean=0, std=0.01)
 
     def _reset_parameters(self):
         """Xavier-uniform initialization of the transformer parameters as in the original code."""
@@ -373,8 +386,12 @@ class ACT(nn.Module):
                 "action" in batch
             ), "actions must be provided when using the variational objective in training mode."
 
-        batch_size = batch["observation.images"].shape[0]
-        device = batch["observation.images"].device
+        if self.use_image:
+            batch_size = batch["observation.images.rgb"].shape[0]
+            device = batch["observation.images.rgb"].device
+        else:
+            batch_size = batch["observation.images.depth"].shape[0]
+            device = batch["observation.images.depth"].device
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and "action" in batch:
@@ -443,14 +460,25 @@ class ACT(nn.Module):
         all_cam_features = []
         all_cam_pos_embeds = []
 
-        images = batch["observation.images"]
+        if self.use_image:
+            images = batch["observation.images.rgb"]
 
-        for cam_index in range(images.shape[-4]):
-            cam_features = self.call_img_backbone(images[:, cam_index])
-            cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-            cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
-            all_cam_features.append(cam_features)
-            all_cam_pos_embeds.append(cam_pos_embed)
+            for cam_index in range(images.shape[-4]):
+                cam_features = self.call_img_backbone(images[:, cam_index])
+                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                cam_features = self.encoder_img_feat_input_proj(cam_features)  # (B, C, h, w)
+                all_cam_features.append(cam_features)
+                all_cam_pos_embeds.append(cam_pos_embed)
+
+        if self.use_depth:
+            depths = batch["observation.images.depth"]
+
+            for cam_index in range(depths.shape[-4]):
+                cam_features = self.call_depth_backbone(depths[:, cam_index])
+                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                cam_features = self.encoder_depth_feat_input_proj(cam_features)  # (B, C, h, w)
+                all_cam_features.append(cam_features)
+                all_cam_pos_embeds.append(cam_pos_embed)
 
         # Concatenate camera observation feature maps and positional embeddings along the width dimension.
         encoder_in = torch.cat(all_cam_features, axis=-1)
@@ -495,9 +523,23 @@ class ACT(nn.Module):
         decoder_out = decoder_out.transpose(0, 1)
 
         actions = self.action_head(decoder_out)
+        
         if self.config.use_success_detector:
-            decoder_out_ = decoder_out.detach().clone()
-            success_prob = self.is_pad_head(decoder_out_).squeeze(-1)
+            detached_encoder_out_ = encoder_out.detach().clone()
+            
+            success_detector_in = torch.zeros(
+                (1, batch_size, self.config.dim_model),
+                dtype=pos_embed.dtype,
+                device=pos_embed.device,
+            )
+            success_detector_out = self.success_detector(
+                success_detector_in,
+                detached_encoder_out_,
+                encoder_pos_embed=pos_embed.detach().clone(),
+                decoder_pos_embed=self.success_detector_pos_embed.weight.unsqueeze(1),
+            )
+        
+            success_prob = self.success_head(success_detector_out)[0]
             
         output = dict()
         output["actions"] = actions

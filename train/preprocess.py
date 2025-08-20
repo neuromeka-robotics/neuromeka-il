@@ -4,6 +4,8 @@ import numpy as np
 import argparse
 import h5py
 from tqdm import tqdm
+import ntpath
+from shutil import copyfile
 
 from helper.utils import check_dir, MathFunc
 
@@ -12,6 +14,12 @@ Pre-process raw data in the format suitable for training.
 
 Follow TODO 1~3 to add new types of data.
 """
+
+N_FILTER_IDX = 0
+N_SUCCESS_IDX = 5
+# N_FILTER_IDX = 10  # 0.05s * 10 = 0.5s
+# N_SUCCESS_IDX = 6  # 0.05s * 6 = 0.3s
+
 
 class DataProcessor:
     def __init__(self, **kwargs):
@@ -25,31 +33,47 @@ class DataProcessor:
         pdot_{id}: (T, 6)  [float] [0~2: mm/s, 3~5: degree/s]
         
         # Proprioception (gripper) (Optional)
-        trigger_value_{id}: (T, 1)  [float]
+        gripper_position_{id}: (T, 1)  [float]
+        grasp_state_{id}: (T, 1)  [float]
         
         # Exteroception (camera)
-        color: (T, H, W, C)  [uint8]
+        images.rgb.{cam_name}: (T, H, W, C)  [uint8]
+        images.depth.{cam_name}: (T, H, W)  [float]
+        images.intrinsics.{cam_name}: (3, 3)  [float]
         
-        # Control (task space control)
+        # Control (robot - task space control)
         tele_abs_control_{id}: (T, 6)  [float] [0~2: mm, 3~5: degree]
+        
+        # Control (gripper)
+        gripper_command_{id}: (T, 1)  [float, range from 0 to 1]
         
         ### TODO 1: Add name and shape of new data
         """
+        self.cam_data_dict = dict()
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            if key.startswith("images."):
+                if "rgb" in key:
+                    self.cam_data_dict[f"observation.{key}"] = value[N_FILTER_IDX:]  # (T, H, W, C)
+                elif "depth" in key:
+                    self.cam_data_dict[f"observation.{key}"] = value[N_FILTER_IDX:][..., np.newaxis]  # (T, H, W, 1)
+                elif "intrinsics" in key:
+                    cam_name = key.split(".")[-1]
+                    n_steps = kwargs[f"images.rgb.{cam_name}"].shape[0]
+                    self.cam_data_dict[f"extra.{key}"] = np.repeat(value[np.newaxis], n_steps, axis=0)[N_FILTER_IDX:]  # (T, 3, 3)
+            else:
+                setattr(self, key, value)
     
     def process(self):
         # Check robot ids
         robot_ids = []        
         for name in self.__dict__.keys():
-            if name not in ["color", "depth", "cam_intrinsics"]:
-                robot_id = int(name.split("_")[-1])
-                if robot_id not in robot_ids:
-                    robot_ids.append(robot_id)
+            if name == "cam_data_dict":
+                continue
+            
+            robot_id = int(name.split("_")[-1])
+            if robot_id not in robot_ids:
+                robot_ids.append(robot_id)
         robot_ids = sorted(robot_ids)
-        
-        # Exteroception (camera)
-        color = self.color
         
         # Init proprioception and control
         # (1) Default (Must)
@@ -63,8 +87,10 @@ class DataProcessor:
         control_end_ori = dict()
         
         # Gripper (Optional)
-        trigger_value = dict()
-        prev_trigger_value = dict()
+        gripper_position = dict()
+        grasp_state = dict()
+        gripper_command = dict()
+        prev_gripper_command = dict()
         
         for robot_id in robot_ids:
             # Proprioception (arm)
@@ -75,25 +101,29 @@ class DataProcessor:
             end_linVel[robot_id] = MathFunc.mm_to_m(getattr(self, f"pdot_{robot_id}")[:, :3])
             end_angVel[robot_id] = MathFunc.degree_to_rad(getattr(self, f"pdot_{robot_id}")[:, 3:])
             
-            if f"trigger_value_{robot_id}" in self.__dict__:
-                trigger_value[robot_id] = getattr(self, f"trigger_value_{robot_id}")
-                if len(trigger_value[robot_id].shape) == 1:
-                    trigger_value[robot_id] = trigger_value[robot_id][..., np.newaxis]  # If the shape is (T,), convert to (T, 1)
-                prev_trigger_value[robot_id] = np.roll(trigger_value[robot_id], 1, axis=0)
-                prev_trigger_value[robot_id][0] = 0 if trigger_value[robot_id][0] == 0 else 1
-            else:
-                trigger_value[robot_id] = None
-                prev_trigger_value[robot_id] = None
+            # Proprioception (gripper)
+            gripper_position[robot_id] = getattr(self, f"gripper_position_{robot_id}").astype(np.float32) \
+                if f"gripper_position_{robot_id}" in self.__dict__ else None
+            grasp_state[robot_id] = getattr(self, f"grasp_state_{robot_id}").astype(np.float32) \
+                if f"grasp_state_{robot_id}" in self.__dict__ else None
             
-            # Control
+            # Control (robot - task space control)
             control_end_pos[robot_id] = MathFunc.mm_to_m(getattr(self, f"tele_abs_control_{robot_id}")[:, :3])
             control_end_euler_ang = MathFunc.degree_to_rad(getattr(self, f"tele_abs_control_{robot_id}")[:, 3:])
+            
+            # Control (gripper)
+            if f"gripper_command_{robot_id}" in self.__dict__:
+                gripper_command[robot_id] = getattr(self, f"gripper_command_{robot_id}").astype(np.float32)
+                prev_gripper_command[robot_id] = np.roll(gripper_command[robot_id], 1, axis=0)
+                prev_gripper_command[robot_id][0] = 0 if gripper_command[robot_id][0] == 0 else 1
+            else:
+                gripper_command[robot_id] = None
+                prev_gripper_command[robot_id] = None
             
             ### TODO 2: Add processing parts for new data
             # Convert euler angle to rotation matrix
             end_ori[robot_id] = []
             control_end_ori[robot_id] = []
-
             n_steps = end_euler_ang.shape[0]
             
             # Compute for base frame
@@ -124,43 +154,69 @@ class DataProcessor:
         control_end_pos = np.concatenate([control_end_pos[robot_id] for robot_id in robot_ids], axis=-1)
         control_end_ori = np.stack([control_end_ori[robot_id] for robot_id in robot_ids], axis=1)
         
-        trigger_value["total"] = None
-        prev_trigger_value["total"] = None
+        gripper_position["total"] = None
+        grasp_state["total"] = None
+        gripper_command["total"] = None
+        prev_gripper_command["total"] = None
         
         for robot_id in robot_ids:
-            if trigger_value[robot_id] is not None:
-                if trigger_value["total"] is None:
-                    trigger_value["total"] = np.copy(trigger_value[robot_id])
+            if gripper_position[robot_id] is not None:
+                if gripper_position["total"] is None:
+                    gripper_position["total"] = np.copy(gripper_position[robot_id])
                 else:
-                    trigger_value["total"] = np.concatenate([trigger_value["total"], trigger_value[robot_id]], axis=-1)
+                    gripper_position["total"] = np.concatenate([gripper_position["total"], gripper_position[robot_id]], axis=-1)
+                    
+            if grasp_state[robot_id] is not None:
+                if grasp_state["total"] is None:
+                    grasp_state["total"] = np.copy(grasp_state[robot_id])
+                else:
+                    grasp_state["total"] = np.concatenate([grasp_state["total"], grasp_state[robot_id]], axis=-1)
+                    
+            if gripper_command[robot_id] is not None:
+                if gripper_command["total"] is None:
+                    gripper_command["total"] = np.copy(gripper_command[robot_id])
+                else:
+                    gripper_command["total"] = np.concatenate([gripper_command["total"], gripper_command[robot_id]], axis=-1)
             
-            if prev_trigger_value[robot_id] is not None:
-                if prev_trigger_value["total"] is None:
-                    prev_trigger_value["total"] = np.copy(prev_trigger_value[robot_id])
+            if prev_gripper_command[robot_id] is not None:
+                if prev_gripper_command["total"] is None:
+                    prev_gripper_command["total"] = np.copy(prev_gripper_command[robot_id])
                 else:
-                    prev_trigger_value["total"] = np.concatenate([prev_trigger_value["total"], prev_trigger_value[robot_id]], axis=-1) 
+                    prev_gripper_command["total"] = np.concatenate([prev_gripper_command["total"], prev_gripper_command[robot_id]], axis=-1) 
         
-        trigger_value = trigger_value["total"]
-        prev_trigger_value = prev_trigger_value["total"]
+        gripper_position = gripper_position["total"]
+        grasp_state = grasp_state["total"]
+        gripper_command = gripper_command["total"]
+        prev_gripper_command = prev_gripper_command["total"]
+        
+        # Generate success label
+        episode_len = q.shape[0]
+        is_success = np.zeros((episode_len, 1), dtype=np.float32)
+        is_success[-N_SUCCESS_IDX:] = 1
         
         # Set processed data
         ### TODO 3: Add new data with appropriate key
         self.processed_data = {
-            "observation.qpos": q,  # (T, n_joints * n_robots)
-            "observation.qvel": qdot,  # (T, n_joints * n_robots)
-            "observation.end_position": end_pos,  # (T, 3 * n_robots)
-            "observation.end_orientation": end_ori,  # (T, n_robots, 3, 3)
-            "observation.end_linear_velocity": end_linVel,  # (T, 3 * n_robots)
-            "observation.end_angular_velocity": end_angVel,  # (T, 3 * n_robots)
-            "observation.images.top": color,  # (T, H, W, C)
-            "action.end_pos": control_end_pos,  # (T, 3 * n_robots)
-            "action.end_ori": control_end_ori,  # (T, n_robots, 3, 3)
+            "observation.qpos": q[N_FILTER_IDX:],  # (T, n_joints * n_robots)
+            "observation.qvel": qdot[N_FILTER_IDX:],  # (T, n_joints * n_robots)
+            "observation.end_position": end_pos[N_FILTER_IDX:],  # (T, 3 * n_robots)
+            "observation.end_orientation": end_ori[N_FILTER_IDX:],  # (T, n_robots, 3, 3)
+            "observation.end_linear_velocity": end_linVel[N_FILTER_IDX:],  # (T, 3 * n_robots)
+            "observation.end_angular_velocity": end_angVel[N_FILTER_IDX:],  # (T, 3 * n_robots)
+            **self.cam_data_dict,  # (T, H, W, C) / (T, H, W)
+            "action.end_pos": control_end_pos[N_FILTER_IDX:],  # (T, 3 * n_robots)
+            "action.end_ori": control_end_ori[N_FILTER_IDX:],  # (T, n_robots, 3, 3)
+            "is_success": is_success[N_FILTER_IDX:]  # (T, 1)
         }
         
-        if trigger_value is not None:
-            self.processed_data["action.trigger_value"] = trigger_value  # (T, 1 * n_robots)
-        if prev_trigger_value is not None:
-            self.processed_data["observation.prev_trigger_value"] = prev_trigger_value  # (T, 1 * n_robots)
+        if gripper_position is not None:
+            self.processed_data["action.gripper_position"] = gripper_position[N_FILTER_IDX:]  # (T, 1 * n_robots)
+        if grasp_state is not None:
+            self.processed_data["observation.grasp_state"] = grasp_state[N_FILTER_IDX:]  # (T, 1 * n_robots)
+        if gripper_command is not None:
+            self.processed_data["action.gripper_command"] = gripper_command[N_FILTER_IDX:]  # (T, 1 * n_robots)
+        if prev_gripper_command is not None:
+            self.processed_data["observation.prev_gripper_command"] = prev_gripper_command[N_FILTER_IDX:]  # (T, 1 * n_robots)
         
     def save(self, file_name: str):
         with h5py.File(file_name, "w") as hf:
@@ -175,6 +231,8 @@ class DataProcessor:
 def get_parser():
     parser = argparse.ArgumentParser(description="Data processing")
     parser.add_argument("--task", required=True, type=str, help="Task name to process")
+    parser.add_argument("--n_filter_idx", default=0, type=int, help="Remove first n_filter_idx")
+    parser.add_argument("--n_success_idx", default=0, type=int, help="Label last n_success_idx as success")
     return parser
 
 def main(args):
@@ -193,6 +251,23 @@ def main(args):
         print("Processed data directory already exists. Automatically removing them.")
         shutil.rmtree(PROCESSED_TASK_DATA_DIR)
     check_dir(PROCESSED_TASK_DATA_DIR, generate=True)
+    
+    # Copy DAGGER progress file if exists
+    dagger_progress_file = f"{DATA_PARENT_DIR}/{args.task}_progress.json"
+    if os.path.exists(dagger_progress_file):
+        base_file_name = ntpath.basename(dagger_progress_file)
+        copyfile(dagger_progress_file, f"{PROCESSED_DATA_PARENT_DIR}/{base_file_name}")
+        print(f"Copying also DAGGER progress file: {base_file_name}")
+        
+    # Set filter idx
+    global N_FILTER_IDX
+    N_FILTER_IDX = args.n_filter_idx
+    print(f"Process start idx: {N_FILTER_IDX}")
+    
+    # Set success idx
+    global N_SUCCESS_IDX
+    N_SUCCESS_IDX = args.n_success_idx
+    print(f"Success stard idx: {-N_SUCCESS_IDX}")
     
     for file in tqdm(os.listdir(TASK_DATA_DIR)):
         # Load raw data

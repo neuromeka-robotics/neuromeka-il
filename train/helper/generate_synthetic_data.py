@@ -51,7 +51,9 @@ if __name__ == "__main__":
             data[f"pdot_{robot_id}"] = np.random.normal(size=(traj_len, 6)).astype(np.float32)  # 0~2: linear velocity / 3~5: angular velocity
             
         # Generate exteroception
-        data["color"] = np.random.randint(0, 256, (traj_len, 480, 640, 3), dtype=np.uint8)  # (height, width, channel) image
+        data["images.rgb.wrist"] = np.random.randint(0, 256, (traj_len, 480, 640, 3), dtype=np.uint8)  # (height, width, channel) image
+        data["images.rgb.left"] = np.random.randint(0, 256, (traj_len, 480, 640, 3), dtype=np.uint8)  # (height, width, channel) image
+        data["images.rgb.right"] = np.random.randint(0, 256, (traj_len, 480, 640, 3), dtype=np.uint8)  # (height, width, channel) image
         
         # Generate robot control
         for robot_id in robot_ids:
@@ -60,7 +62,9 @@ if __name__ == "__main__":
         # Generate gripper control
         if robot_mode in [RobotMode.SINGLE_ROBOT_GRIPPER, RobotMode.DUAL_ROBOT_GRIPPER]:
             for robot_id in robot_ids:
-                data[f"trigger_value_{robot_id}"] = np.random.uniform(low=0, high=1, size=(traj_len, 1)).astype(np.float32)
+                data[f"gripper_position_{robot_id}"] = np.random.uniform(low=0, high=1, size=(traj_len, 1)).astype(np.float32)
+                data[f"grasp_state_{robot_id}"] = np.random.uniform(low=0, high=1, size=(traj_len, 1)).astype(np.float32)
+                data[f"gripper_command_{robot_id}"] = np.random.uniform(low=0, high=1, size=(traj_len, 1)).astype(np.float32)
                 
         # Save
         with h5py.File(f"{DATA_DIR}/{data_id}.h5", "w") as hf:

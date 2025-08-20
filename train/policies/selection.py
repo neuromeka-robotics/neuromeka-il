@@ -60,4 +60,28 @@ class ControlMode(Enum):
         else:
             raise ValueError(f"Unavailable property: {name}")
         
+
+class GripperMode(Enum):
+    NOT_USE = 1
+    BINARY = 2
+    CONTINUOUS = 3  # TODO: Not implemented
+    
+    @staticmethod
+    def robot_mode_to_gripper_mode(mode):
+        if mode in [RobotMode.SINGLE_ROBOT, RobotMode.DUAL_ROBOT]:
+            return GripperMode.NOT_USE
+        elif mode in [RobotMode.SINGLE_ROBOT_GRIPPER, RobotMode.DUAL_ROBOT_GRIPPER]:
+            return GripperMode.BINARY
+        else:
+            raise ValueError(f"Unavailable robot mode: {mode}")
         
+    @staticmethod
+    def mode_to_name(mode):
+        if mode == GripperMode.NOT_USE:
+            return "not_use"
+        elif mode == GripperMode.BINARY:
+            return "binary"
+        elif mode == GripperMode.CONTINUOUS:
+            return "continuous"
+        else:
+            raise ValueError(f"Unavailable gripper mode: {mode}")

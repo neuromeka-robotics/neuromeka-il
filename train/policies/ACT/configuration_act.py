@@ -37,7 +37,7 @@ class ACTConfig:
     
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
-            "observation.images.top": [3, 480, 640],
+            "observation.images.rgb.top": [3, 480, 640],
             "observation.qpos": [6],
             "observation.qvel": [6],
         }
@@ -46,7 +46,7 @@ class ACTConfig:
         default_factory=lambda: {
             "action.pos": [3],
             "action.rot": [6],
-            "is_pad": [1],
+            "is_success": [1],
         }
     )
     action_dim: int = 9
@@ -54,7 +54,7 @@ class ACTConfig:
     # Normalization / Unnormalization
     input_normalization_modes: dict[str, str] = field(
         default_factory=lambda: {
-            "observation.images.top": "mean_std",
+            "observation.images.rgb.top": "mean_std",
             "observation.qpos": "mean_std",
             "observation.qvel": "mean_std",
         }
@@ -140,3 +140,8 @@ class ACTConfig:
 
         if self.control_mode in ControlMode.get_candidate("task") and self.temporal_ensemble_momentum is not None:
             raise NotImplementedError("Task space control does not currently support temporal smoothing")
+        
+        if "is_success" in self.output_shapes.keys():
+            self.use_success_detector = True
+        else:
+            self.use_success_detector = False

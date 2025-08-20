@@ -32,22 +32,22 @@ policy:
   chunk_size: 20  # 1s
 
   input_shapes: 
-    observation.images.top: [3, 224, 224]
+    observation.images.rgb.top: [3, 224, 224]
     observation.qpos: [6] 
     observation.qvel: [6]
-    observation.prev_trigger_value: [1]
+    observation.prev_gripper_command: [1]
 
   output_shapes:
     action.end_pos: [3]
     action.end_ori: [6]
-    action.trigger_value: [1]
-    is_pad: [1]
+    action.gripper_command: [1]
+    is_success: [1]  # [Option] Can train success detector concurrently
 
   action_dim: 10
   
   ## normalization/Unnormalization
   input_normalization_modes: 
-    observation.images.top: mean_std
+    observation.images.rgb.top: mean_std
     observation.qpos: mean_std
     observation.qvel: mean_std
 
@@ -73,9 +73,6 @@ policy:
   latent_dim: 32
   n_vae_encoder_layers: 4
 
-  # Success detector
-  use_success_detector: True  # [Option] Can train success detector concurrently
-
   ## Training and loss computation
   dropout: 0.1
   kl_weight: 10.0
@@ -83,4 +80,4 @@ policy:
 # # [Option] Can set image crop
 # extra:
 #   image_crop:
-#     observation.images.top: [[250, 450], [180, 450]]
+#     observation.images.rgb.top: [[250, 450], [180, 450]]

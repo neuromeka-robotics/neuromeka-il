@@ -2,7 +2,7 @@ import time
 from enum import Enum, auto
 
 from helper.extra_utils import KeyboardListener, load_NN_controller
-
+from helper.controller_utils import Base_NN_controller
 
 class COMMAND_MACHINE(Enum):
     MOVE_TO_TASK_HOME = auto()
@@ -39,13 +39,13 @@ if __name__ == "__main__":
     
     # set nn controller and robot connection
     NN_controller = load_NN_controller(controller_type=demo_task)
-    nn_controller = NN_controller()
+    nn_controller: Base_NN_controller = NN_controller()
     
     # set keyboard listener
     task_command_listener = KeyboardListener(key_targets=['1', '2', '7', '8', '9', '0'])
 
     # Set keyboard commmand period.
-    # Too small value may slow down other threading (e.g., nn_control_fn), 
+    # Too small value may slow down other threading (e.g., _nn_control_fn), 
     # especially when using pynput for keyboard input.
     DEMO_COMMAND_PERIOD = 0.2 
 

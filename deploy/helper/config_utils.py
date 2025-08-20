@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 import os
 
+from nrmk_il.helper.utils import get_base_dir
 
 @dataclass
 class ROBOT_CONFIG:
@@ -82,8 +83,8 @@ class MODEL_CONFIG:
 
 @dataclass
 class DATA_CONFIG:
-    data_dir: str =  f"{os.path.dirname(os.path.abspath(__file__))}/../../train/data",
-    data_viz_dir: str =  f"{os.path.dirname(os.path.abspath(__file__))}/../../train/data_viz"
+    data_dir: str = os.path.join(get_base_dir(), "data")
+    data_viz_dir: str =  os.path.join(get_base_dir(), "data_viz")
     
     device_type: str = "vive"
     device_params: Dict = field(

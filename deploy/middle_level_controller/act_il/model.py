@@ -5,7 +5,6 @@ from ruamel.yaml import YAML
 from enum import Enum
 import os
 import re
-import sys
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -16,10 +15,8 @@ from helper.controller_utils import Empty_NN_policy
 from helper.math_utils import MathFunc
 from helper.extra_utils import NN_CONTROL_STATE
 
-match = re.search(r'(.*/neuromeka-il/)', os.path.abspath(__file__))
-sys.path.append(os.path.join(match.group(1), "train"))
-from policies import ACTConfig, ACTPolicy
-from policies.selection import ControlMode, GripperMode
+from nrmk_il.policies import ACTConfig, ACTPolicy
+from nrmk_il.policies.selection import ControlMode, GripperMode
 
 
 class NN_policy(Empty_NN_policy):

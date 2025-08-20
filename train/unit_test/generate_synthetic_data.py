@@ -1,15 +1,13 @@
 import argparse
 import os
+import re
 import h5py
 import numpy as np
 import shutil
 from tqdm import tqdm
 
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from policies.selection import RobotMode
-from helper.utils import check_dir
+from nrmk_il.policies.selection import RobotMode
+from nrmk_il.helper.utils import check_dir, get_base_dir
 
 
 if __name__ == "__main__":
@@ -28,7 +26,8 @@ if __name__ == "__main__":
     n_data = 5  # Number of total episodes
     n_robot_joints = 6  # Number of joints in a single robot
     
-    DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", task)
+    BASE_DIR = get_base_dir()
+    DATA_DIR = os.path.join(BASE_DIR, "data", task)
     exist = check_dir(DATA_DIR, generate=False)
     if exist:
         print("Data directory already exists. Automatically removing them.")

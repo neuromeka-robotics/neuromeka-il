@@ -11,12 +11,12 @@ import numpy as np
 import torch
 import json
 
-from dataset.imitation_dataset import load_data, load_dagger_validation_data
-from config.configuration_base import BaseConfig
-from policies import ACTConfig
-from policies import ACTPolicy
-from policies.selection import ControlMode
-from helper.utils import (
+from nrmk_il.dataset.imitation_dataset import load_data, load_dagger_validation_data
+from nrmk_il.config.configuration_base import BaseConfig
+from nrmk_il.policies import ACTConfig
+from nrmk_il.policies import ACTPolicy
+from nrmk_il.policies.selection import ControlMode
+from nrmk_il.helper.utils import (
     set_seed, detach_dict, check_dir, update_pbar,
     Logger
 )

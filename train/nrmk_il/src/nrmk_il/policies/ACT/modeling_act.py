@@ -33,11 +33,11 @@ from torch import Tensor, nn
 from torchvision.models._utils import IntermediateLayerGetter
 from torchvision.ops.misc import FrozenBatchNorm2d
 
-from policies.ACT.configuration_act import ACTConfig
-from policies.normalize import Normalize, Unnormalize
-from policies.selection import RobotMode, ControlMode
+from nrmk_il.policies.ACT.configuration_act import ACTConfig
+from nrmk_il.policies.normalize import Normalize, Unnormalize
+from nrmk_il.policies.selection import RobotMode, ControlMode
 
-from helper.utils import cat_batch_state, cat_batch_action, decode_6d_action_head
+from nrmk_il.helper.utils import cat_batch_state, cat_batch_action, decode_6d_action_head
 
 
 class ACTPolicy(nn.Module):

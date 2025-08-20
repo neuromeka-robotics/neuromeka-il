@@ -1,10 +1,9 @@
-from typing import List, Dict
-
 import os
 from pathlib import Path
 import datetime
 from dataclasses import dataclass
 
+from nrmk_il.helper.utils import get_base_dir
 
 @dataclass
 class BaseConfig:
@@ -29,10 +28,9 @@ class BaseConfig:
             assert self.model_name is None, "In TRAIN FROM SCRATCH mode, model_name is automatically generated"
             self.model_name = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
             
-        TRAIN_DIR_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    
-        self.dataset_dir = f"{TRAIN_DIR_PATH}/processed_data/{self.task_name}"
-        self.ckpt_dir = f"{TRAIN_DIR_PATH}/weights/{self.task_name}/{self.model_name}"
+        BASE_DIR = get_base_dir()
+        self.dataset_dir = os.path.join(BASE_DIR, "processed_data", self.task_name)
+        self.ckpt_dir = os.path.join(BASE_DIR, "weights", self.task_name, self.model_name)
             
         if self.pretrained_ckpt_dir is not None:
             assert os.path.isdir(self.pretrained_ckpt_dir), "Pre-trained model does not exist."

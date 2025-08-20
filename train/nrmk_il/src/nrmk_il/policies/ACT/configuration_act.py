@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 
-from policies.selection import RobotMode, ControlMode
+from nrmk_il.policies.selection import RobotMode, ControlMode
 
 @dataclass
 class ACTConfig:

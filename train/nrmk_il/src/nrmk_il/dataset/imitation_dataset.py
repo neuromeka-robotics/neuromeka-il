@@ -11,7 +11,8 @@ from torch.utils.data import DataLoader, Sampler
 import torch.utils.data
 import torchvision.transforms as transforms
 
-from config.configuration_base import BaseConfig
+from nrmk_il.config.configuration_base import BaseConfig
+from nrmk_il.helper.utils import TorchRunningStats
 
 
 class ImageLoadDataset(torch.utils.data.Dataset):
@@ -539,8 +540,6 @@ def load_data(base_cfg: BaseConfig,
         
     # Compute stats for relative_delta task space control
     if compute_relative_delta_norm:
-        from helper.utils import TorchRunningStats
-        
         data = image_dataset.__getitem__(0)
         data_keys = ["action.relative_delta.end_pos", "action.relative_delta.end_ori"]
         

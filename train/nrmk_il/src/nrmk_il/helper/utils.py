@@ -7,8 +7,6 @@ import numpy as np
 import torch
 import wandb
 
-from config.configuration_base import BaseConfig
-
 
 class MathFunc:
     @staticmethod
@@ -161,7 +159,7 @@ class TorchRotMatFunc:
     
     
 class Logger:
-    def __init__(self, base_cfg: BaseConfig, project_name: str="imitation learning"):
+    def __init__(self, base_cfg, project_name: str="imitation learning"):
         wandb.init(
             project=project_name,
         )
@@ -243,6 +241,15 @@ def check_dir(folder: str, generate: bool=False) -> bool:
             return True
         else:
             return False
+        
+        
+def get_base_dir():
+    """
+    Check absolute directory path to "train"
+    """
+    import re
+    BASE_DIR = re.search(r'(.*/train/)', os.path.abspath(__file__)).group(1)
+    return BASE_DIR
         
 def detach_dict(d: Dict[str, Union[np.ndarray, torch.tensor]]) -> Dict[str, Union[np.ndarray, torch.tensor]]:
     """

@@ -7,7 +7,7 @@ from tqdm import tqdm
 import ntpath
 from shutil import copyfile
 
-from helper.utils import check_dir, MathFunc
+from nrmk_il.helper.utils import check_dir, get_base_dir, MathFunc
 
 """
 Pre-process raw data in the format suitable for training.
@@ -235,7 +235,7 @@ def get_parser():
 
 def main(args):
     # Update root data directory
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = get_base_dir()
     DATA_PARENT_DIR = os.path.join(BASE_DIR, "data")
     PROCESSED_DATA_PARENT_DIR = os.path.join(BASE_DIR, "processed_data")
     

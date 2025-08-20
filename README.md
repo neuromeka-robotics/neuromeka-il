@@ -71,7 +71,7 @@ Before proceeding with the pipeline below, make sure that your SSD has at least 
 
 First, create and preprocess synthetic data. Four datasets (*test_single_robot*, *test_single_robot_gripper*, *test_dual_robot*, *test_dual_robot_gripper*) will be generated under `data` and `processed_data`.
 ```
-bash make_fake_data.sh
+bash unit_test/make_fake_data.sh
 ```
 Then, train neural networks with example configurations.
 ```
@@ -103,7 +103,7 @@ python imitate.py --config-path=config/example --config-name=dual_robot_gripper_
 ### Training plot examples
 [Wandb](https://wandb.ai/site/) can be enabled in the configuration file to visualize training progress. Below is an example results for single robot arm task.
 
-<img width=600 src='train/plot/example_result.png'>
+<img width=600 src='train/unit_test/plot/example_result.png'>
 
 ## Deployment
 

@@ -4,7 +4,7 @@ base:
   task_name: broom
   seed: 0
   num_workers: 4
-  logging: True  # [Option] Can enable wandb logging
+  logging: False  # [Option] Can enable wandb logging
 
 ### Train configuration
 train:
@@ -72,8 +72,3 @@ policy:
   ## Training and loss computation
   dropout: 0.1
   kl_weight: 10.0
-
-# # [Option] Can set image crop
-# extra:
-#   image_crop:
-#     observation.images.rgb.wrist: [[250, 450], [180, 450]]

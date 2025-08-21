@@ -57,7 +57,8 @@ class CAMERA_CONFIG:
         default_factory=lambda: {
             "wrist": {
                 "serial": "233522079515",
-                "exposure": 50   
+                "exposure": 50,
+                "enable_depth": False 
             }
         }
     )

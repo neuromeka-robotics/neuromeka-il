@@ -103,7 +103,7 @@ class RealsenseCamHandler:
         # Set camera
         self.camera = RealsenseCam()
         self.camera.connect(serial_number, align, clipping_distance_m, exposure)
-        time.sleep(2)
+        time.sleep(0.5)
         
     def __del__(self):
         self.stop()

@@ -37,6 +37,7 @@ class RobotiqUSBClient(BaseGripperClient):
         
         from pyrobotiqgripper import RobotiqGripper as RobotiqGripperClient
         self.gripper = RobotiqGripperClient(portname=port, slaveAddress=slave_address)
+        self.initialize()
         
     def open(self):
         try:

@@ -53,7 +53,7 @@ class NN_controller(Base_NN_controller):
 
     def load_policy(self):
         if isinstance(self.nn_policy, Empty_NN_policy):
-            self.nn_policy: NN_policy = NN_policy(self.TASK_NAME)
+            self.nn_policy: NN_policy = NN_policy(robot_config=self.ROBOT_CONFIG, task_config=self.TASK_CONFIG)
         
     def exec_nn_control(self, duration: float):
         if not self._control_triggered:

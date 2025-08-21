@@ -200,7 +200,8 @@ class NN_controller(Base_NN_controller):
 
             nn_robot_action = dict()
             for idx, robot_id in enumerate(self.ROBOT_IDS):
-                nn_robot_action[robot_id] = nn_control[f"robot_action_{idx}"].tolist()
+                nn_robot_action[robot_id] = self.TASK_CONFIG.extra_config.control_post_process_fn(
+                    nn_control[f"robot_action_{idx}"].tolist())
             if use_gripper:
                 nn_gripper_action = dict()
                 for idx, robot_id in enumerate(self.ROBOT_IDS):
@@ -235,7 +236,6 @@ class NN_controller(Base_NN_controller):
         
         # soft stop
         self.exec_soft_stop(
-            task_robot_ids=self.ROBOT_IDS,
             last_action=nn_robot_action,
             control_period=self.ROBOT_CONFIG.control_dt,
             mode="task_abs")

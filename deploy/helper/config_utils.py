@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List, Dict, Callable
 import os
 
 from nrmk_il.helper.utils import get_base_dir
@@ -95,14 +95,25 @@ class DATA_CONFIG:
     
     def __post_init__(self):
         assert self.device_type in ["vive"], f"Unavailable device {self.device_type}"
+        
+@dataclass
+class EXTRA_CONFIG:
+    control_post_process_fn : Callable | None = lambda x: x
 
 
 @dataclass
 class TASK_CONFIG:
     name: str = "base"
-    camera_config: CAMERA_CONFIG | None = None
-    model_config: MODEL_CONFIG | None = None
-    data_config: DATA_CONFIG | None = None
+    camera_config: CAMERA_CONFIG | None = CAMERA_CONFIG()
+    model_config: MODEL_CONFIG | None = MODEL_CONFIG()
+    data_config: DATA_CONFIG | None = DATA_CONFIG()
+    extra_config: EXTRA_CONFIG = EXTRA_CONFIG()
+    
+    def __post_init__(self):
+        assert self.camera_config is not None, \
+            "Camera configuration is not provided"
+        assert self.model_config is not None or self.data_config is not None, \
+            "Either model or data configuration must be provided"
     
     
 BASE_ROBOT_CONFIG = ROBOT_CONFIG()

@@ -1,3 +1,5 @@
+from typing import Dict
+
 import math
 import numpy as np
 
@@ -253,3 +255,19 @@ class SE3:
     def __init__(self):
         self.pos = np.zeros(3, dtype=np.float32)
         self.rot = np.identity(3, dtype=np.float32)
+        
+        
+
+def clip_task_space_control(control, range: Dict[str, Dict] = {}):
+    assert len(control) == 6, \
+        f"Task space control must have 6 elements (x, y, z, roll, pitch, yaw). Currently, it has {len(control)} elements."
+    
+    for axis_name in range.keys():
+        if axis_name == "x":
+            control[0] = np.clip(control[0], a_min=range[axis_name].get("min", -np.inf), a_max=range[axis_name].get("max", np.inf))
+        if axis_name == "y":
+            control[1] = np.clip(control[1], a_min=range[axis_name].get("min", -np.inf), a_max=range[axis_name].get("max", np.inf))
+        if axis_name == "z":
+            control[2] = np.clip(control[2], a_min=range[axis_name].get("min", -np.inf), a_max=range[axis_name].get("max", np.inf))
+    
+    return control

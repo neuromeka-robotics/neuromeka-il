@@ -121,6 +121,7 @@ class DataCollectionScheduler(Controller):
         # initialize state variable
         prev_button = False
         is_recording = False
+        value = {robot_id: self.robot[robot_id].get_state()["p"] for robot_id in self.ROBOT_IDS}
 
         # start
         while self._collection_triggered:
@@ -155,6 +156,7 @@ class DataCollectionScheduler(Controller):
             
             # device connection lost
             if not device_data["final_valid"]:
+                print("Device input not valid or connection lost")
                 break
 
             # finish recording
@@ -177,10 +179,11 @@ class DataCollectionScheduler(Controller):
                 
             if is_recording:
                 # get robot control
-                value = {robot_id: device_data[robot_id]["control"] for robot_id in self.ROBOT_IDS}
+                value = {robot_id: self.TASK_CONFIG.extra_config.control_post_process_fn(device_data[robot_id]["control"]) \
+                    for robot_id in self.ROBOT_IDS}
                 
                 # get gripper control (BINARY)
-                gripper_command = {robot_id: np.round(device_data[robot_id]["trigger"]) for robot_id in self.ROBOT_IDS}
+                gripper_command = {robot_id: (1. - np.round(device_data[robot_id]["trigger"])) for robot_id in self.ROBOT_IDS}
                 
                 # update buffer    
                 for robot_id in self.ROBOT_IDS:                    
@@ -207,7 +210,6 @@ class DataCollectionScheduler(Controller):
                     
         # soft stop
         self.exec_soft_stop(
-            task_robot_ids=self.ROBOT_IDS,
             last_action=value,
             control_period=self.ROBOT_CONFIG.control_dt,
             mode=self.control_mode)
@@ -406,9 +408,9 @@ class TeleopDataCollector:
             end_pose_traj = collected_traj[f"p_{robot_id}"]
             end_vel_traj = collected_traj[f"pdot_{robot_id}"]
             control_traj = collected_traj[f"tele_abs_control_{robot_id}"]
-            trigger_value_traj = collected_traj[f"trigger_value_{robot_id}"]
             gripper_position_traj = collected_traj[f"gripper_position_{robot_id}"]
-            object_detected_traj = collected_traj[f"object_detected_{robot_id}"]
+            grasp_state_traj = collected_traj[f"grasp_state_{robot_id}"]
+            gripper_command_traj = collected_traj[f"gripper_command_{robot_id}"]
 
             n_steps = joint_pos_traj.shape[0]
             time_traj = np.arange(n_steps) * 1 / FREQUENCY
@@ -448,10 +450,10 @@ class TeleopDataCollector:
             plt.clf()
             plt.close()
 
-            plt.plot(time_traj, trigger_value_traj)
+            plt.plot(time_traj, gripper_command_traj)
             plt.xlabel("Time [s]")
-            plt.ylabel("Trigger")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_trigger_{robot_id}.png")
+            plt.ylabel("Gripper command")
+            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_command_{robot_id}.png")
             plt.clf()
             plt.close()
 
@@ -462,9 +464,9 @@ class TeleopDataCollector:
             plt.clf()
             plt.close()
 
-            plt.plot(time_traj, object_detected_traj)
+            plt.plot(time_traj, grasp_state_traj)
             plt.xlabel("Time [s]")
-            plt.ylabel("Detected")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_grasp_detected_{robot_id}.png")
+            plt.ylabel("Grasp state")
+            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_grasp_state_{robot_id}.png")
             plt.clf()
             plt.close()

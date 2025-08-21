@@ -50,5 +50,7 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         model_file = "policy_last.ckpt",
         success_threshold = 0.5,
         device = "cuda"
-    )
+    ),
+    
+    data_config = None
 )

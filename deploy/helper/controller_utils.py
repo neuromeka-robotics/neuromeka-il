@@ -14,13 +14,6 @@ from helper.extra_utils import NN_CONTROL_STATE
 from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG, BASE_ROBOT_CONFIG, BASE_TASK_CONFIG
 
 
-def require_robot_id(func):
-    def wrapper(self, *args, **kwargs):
-        self.check_robot_id()
-        return func(self, *args, **kwargs)
-    return wrapper
-
-
 class Controller:
     ROBOT_CONFIG = BASE_ROBOT_CONFIG
     ROBOT_IDS = BASE_ROBOT_CONFIG.robot_ids
@@ -44,7 +37,6 @@ class Controller:
         self.robot_cluster = RobotCluster(robots=self.robot)
         self.exec_set_idle()
 
-    @require_robot_id
     def exec_home_pos(self, wait=False):
         for robot_id in self.ROBOT_IDS:
             self.set_idle(robot_id)
@@ -63,17 +55,14 @@ class Controller:
             acc_ratio={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["move_acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
         )
 
-    @require_robot_id
     def exec_set_teleop(self):
         for robot_id in self.ROBOT_IDS:
             self.set_teleop(robot_id)
 
-    @require_robot_id
     def exec_set_idle(self):
         for robot_id in self.ROBOT_IDS:
             self.set_idle(robot_id)
 
-    @require_robot_id
     def exec_direct_teaching(self, enable: bool):
         for robot_id in self.ROBOT_IDS:
             robot_state = self.robot[robot_id].get_state()["op_state"]
@@ -93,7 +82,6 @@ class Controller:
                 if robot_state == ROBOT_STATE.DIRECT_TEACHING:
                     self.robot[robot_id].set_direct_teaching(enable=False)
 
-    @require_robot_id
     def exec_emergency_stop(self, enable: bool):
         for robot_id in self.ROBOT_IDS:
             robot_state = self.robot[robot_id].get_state()["op_state"]
@@ -131,7 +119,6 @@ class Controller:
             if wait_time > 0.:
                 time.sleep(wait_time)
 
-    @require_robot_id
     def set_teleop(self, robot_id: int, mode: str = "task_abs"):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
         assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
@@ -148,7 +135,6 @@ class Controller:
                 self.robot[robot_id].start_teleop(mode=mode)
                 time.sleep(0.2)
 
-    @require_robot_id
     def set_no_teleop(self, robot_id: int):
         assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
 
@@ -163,7 +149,6 @@ class Controller:
                 self.robot[robot_id].stop_teleop()
                 time.sleep(0.2)
 
-    @require_robot_id
     def set_recovery(self, robot_id: int):
         assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
 
@@ -175,7 +160,6 @@ class Controller:
             else:
                 break
     
-    @require_robot_id
     def set_idle(self, robot_id: int):
         assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
         

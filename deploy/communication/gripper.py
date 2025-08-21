@@ -32,10 +32,10 @@ class BaseGripperClient:
         
 
 class RobotiqUSBClient(BaseGripperClient):
-    def __init__(self, port = '/dev/ttyUSB0', slave_address = 9):
+    def __init__(self, port = '/dev/robotiq_2f85', slave_address = 9):
         super(RobotiqUSBClient, self).__init__()
         
-        from pyRobotiqGripper import RobotiqGripper as RobotiqGripperClient
+        from pyrobotiqgripper import RobotiqGripper as RobotiqGripperClient
         self.gripper = RobotiqGripperClient(portname=port, slaveAddress=slave_address)
         
     def open(self):

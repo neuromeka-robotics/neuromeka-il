@@ -1,13 +1,13 @@
 ### Base configuration
 base:
   policy_class: act
-  task_name: test_single_robot
+  task_name: test_dual_robot_gripper
   seed: 0
   num_workers: 4
   logging: False  # [Option] Can enable wandb logging
 
   # # [Option] Can load pretrained policy
-  # pretrained_ckpt_dir: /PATH/TO/NEUROMEKA-IL/weights/test_single_robot/XXXX-XX-XX-XX-XX-XX
+  # pretrained_ckpt_dir: /PATH/TO/NEUROMEKA-IL/weights/test_dual_robot_gripper/XXXX-XX-XX-XX-XX-XX
 
 ### Train configuration
 train:
@@ -21,7 +21,7 @@ train:
 ### ACT configuration
 policy: 
   ## robot / control mode
-  robot_mode: single_robot
+  robot_mode: dual_robot_gripper
   control_mode: relative_delta_task_space
 
   ## inference
@@ -34,15 +34,15 @@ policy:
 
   input_shapes: 
     observation.images.rgb.wrist: [3, 224, 224]
-    observation.qpos: [6] 
-    observation.qvel: [6]
+    observation.qpos: [12] 
+    observation.qvel: [12]
+    observation.prev_gripper_command: [2]
 
   output_shapes:
-    action.relative_delta.end_pos: [3]
-    action.relative_delta.end_ori: [6]
+    action.relative_delta.end_pos: [6]
+    action.relative_delta.end_ori: [12]
+    action.gripper_command: [2]
     is_success: [1]  # [Option] Can train success detector concurrently
-
-  action_dim: 9
   
   ## normalization/Unnormalization
   input_normalization_modes: 

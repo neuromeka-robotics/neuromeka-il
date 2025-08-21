@@ -44,8 +44,6 @@ policy:
     action.gripper_command: [1]
     is_success: [1]  # [Option] Can train success detector concurrently
 
-  action_dim: 10
-  
   ## normalization/Unnormalization
   input_normalization_modes: 
     observation.images.rgb.wrist: mean_std

@@ -22,7 +22,7 @@ train:
 policy: 
   ## robot / control mode
   robot_mode: single_robot
-  control_mode: task_space
+  control_mode: relative_delta_task_space
 
   ## inference
   temporal_ensemble_momentum: null
@@ -34,26 +34,22 @@ policy:
 
   input_shapes: 
     observation.images.rgb.wrist: [3, 224, 224]
-    observation.images.rgb.left: [3, 224, 224]
     observation.qpos: [6] 
     observation.qvel: [6]
 
   output_shapes:
-    action.end_pos: [3]
-    action.end_ori: [6]
+    action.relative_delta.end_pos: [3]
+    action.relative_delta.end_ori: [6]
     is_success: [1]  # [Option] Can train success detector concurrently
 
-  action_dim: 9
-  
   ## normalization/Unnormalization
   input_normalization_modes: 
     observation.images.rgb.wrist: mean_std
-    observation.images.rgb.left: mean_std
     observation.qpos: mean_std
     observation.qvel: mean_std
 
   output_normalization_modes: 
-    action.end_pos: mean_std
+    action.relative_delta.end_pos: mean_std
 
   ## Architecture
   # vision backbone

@@ -125,6 +125,15 @@ class ACTConfig:
         assert isinstance(self.control_mode, str), "Control mode should be initially defined in string"
         self.control_mode = ControlMode.name_to_mode(self.control_mode)
         
+        # Check all the image size are same
+        # All images should be resized to same size
+        self.action_dim = 0
+        for name, output_shape in self.output_shapes.items():
+            if name.startswith("action."):
+                assert len(output_shape) == 1
+                self.action_dim += output_shape[0]
+
+        assert self.action_dim > 0, f"Acion not correctly defined (dim: {self.action_dim})"
         if (self.robot_mode == RobotMode.SINGLE_ROBOT) \
             and (self.control_mode in ControlMode.get_candidate(name="task")):
             assert self.action_dim >= 3 + 6
@@ -151,7 +160,7 @@ class ACTConfig:
         # All images should be resized to same size
         default_img_shape = None
         for name, input_shape in self.input_shapes.items():
-            if name.startswith("observation.images"):
+            if name.startswith("observation.images."):
                 current_img_shape = input_shape[-2:]
             
             if default_img_shape is None:

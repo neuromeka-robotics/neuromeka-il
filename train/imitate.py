@@ -96,7 +96,7 @@ def train_bc(
     **kwargs):
     # Set logger
     if config.logging:
-        train_logger = Logger(config, project_name="imitation learning")
+        train_logger = Logger(config, project_name="Neuromeka IL")
 
     # Set progress bar
     pbar = tqdm(total=train_config["num_epochs"])

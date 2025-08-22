@@ -14,10 +14,10 @@ from communication.robot import Robot
 from perception_module.realsense import RealsenseCamHandler
 
 # nn models
-from middle_level_controller.act_il.model import *
+from middle_level_controller.act_il_remote.model import *
 
 # config
-from middle_level_controller.act_il.config import CUSTOM_ROBOT_CONFIG, CUSTOM_TASK_CONFIG
+from middle_level_controller.act_il_remote.config import CUSTOM_ROBOT_CONFIG, CUSTOM_TASK_CONFIG
 
 
 class NN_controller(Base_NN_controller):

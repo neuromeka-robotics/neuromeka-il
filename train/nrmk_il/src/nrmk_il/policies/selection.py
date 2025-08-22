@@ -21,6 +21,19 @@ class RobotMode(Enum):
             raise ValueError(f"Unavailable robot mode: {name}")
         
     @staticmethod
+    def mode_to_name(mode):
+        if mode == RobotMode.SINGLE_ROBOT:
+            return "single_robot"
+        elif mode == RobotMode.SINGLE_ROBOT_GRIPPER:
+            return "single_robot_gripper"
+        elif mode == RobotMode.DUAL_ROBOT:
+            return "dual_robot"
+        elif mode == RobotMode.DUAL_ROBOT_GRIPPER:
+            return "dual_robot_gripper"
+        else:
+            raise ValueError(f"Unavailable robot mode: {mode}")
+        
+    @staticmethod
     def get_num_robots(mode):
         if mode in [RobotMode.SINGLE_ROBOT, RobotMode.SINGLE_ROBOT_GRIPPER]:
             num_robots = 1
@@ -43,6 +56,15 @@ class ControlMode(Enum):
             return ControlMode.RELATIVE_DELTA_TASK_SPACE
         else:
             raise ValueError(f"Unavailable control mode: {name}")
+    
+    @staticmethod
+    def mode_to_name(mode):
+        if mode == ControlMode.TASK_SPACE:
+            return "task_space"
+        elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
+            return "relative_delta_task_space"
+        else:
+            raise ValueError(f"Unavailable control mode: {mode}")
         
     @staticmethod
     def mode_to_action_name(mode):
@@ -67,13 +89,15 @@ class GripperMode(Enum):
     CONTINUOUS = 3  # TODO: Not implemented
     
     @staticmethod
-    def robot_mode_to_gripper_mode(mode):
-        if mode in [RobotMode.SINGLE_ROBOT, RobotMode.DUAL_ROBOT]:
+    def name_to_mode(name: str):
+        if name == "not_use":
             return GripperMode.NOT_USE
-        elif mode in [RobotMode.SINGLE_ROBOT_GRIPPER, RobotMode.DUAL_ROBOT_GRIPPER]:
+        elif name == "binary":
             return GripperMode.BINARY
+        elif name == "continuous":
+            return GripperMode.CONTINUOUS
         else:
-            raise ValueError(f"Unavailable robot mode: {mode}")
+            return ValueError(f"Unavailable gripper mode: {name}")
         
     @staticmethod
     def mode_to_name(mode):
@@ -85,3 +109,12 @@ class GripperMode(Enum):
             return "continuous"
         else:
             raise ValueError(f"Unavailable gripper mode: {mode}")
+        
+    @staticmethod
+    def robot_mode_to_gripper_mode(mode):
+        if mode in [RobotMode.SINGLE_ROBOT, RobotMode.DUAL_ROBOT]:
+            return GripperMode.NOT_USE
+        elif mode in [RobotMode.SINGLE_ROBOT_GRIPPER, RobotMode.DUAL_ROBOT_GRIPPER]:
+            return GripperMode.BINARY
+        else:
+            raise ValueError(f"Unavailable robot mode: {mode}")

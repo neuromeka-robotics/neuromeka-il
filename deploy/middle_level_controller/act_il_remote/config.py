@@ -48,7 +48,8 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         model_dir = "/home/nrmk/neuromeka-il/train/weights/pick_and_place/2025-08-21-21-31-23",
         model_file = "policy_last.ckpt",
         success_threshold = 0.8,
-        device = "cuda"
+        device = "cuda",
+        port = 5555
     ),
     
     data_config = None,

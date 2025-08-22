@@ -77,6 +77,7 @@ class MODEL_CONFIG:
     model_file: str = "policy_last.ckpt"
     success_threshold: float = 1.
     device: str = "cuda"
+    port: int = 5555  # Required for external nn model usage via server-client communication
     
     def __post_init__(self):
         assert self.device in ["cpu", "cuda"], f"Unavailable device {self.device}"

@@ -14,9 +14,10 @@ from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
 from helper.controller_utils import Empty_NN_policy
 from helper.math_utils import MathFunc
 from helper.extra_utils import NN_CONTROL_STATE
-
-from nrmk_il.policies import ACTConfig, ACTPolicy
 from nrmk_il.policies.selection import ControlMode, GripperMode
+
+# internal nn models
+from nrmk_il.policies import ACTConfig, ACTPolicy
 
 
 class NN_policy(Empty_NN_policy):
@@ -41,8 +42,6 @@ class NN_policy(Empty_NN_policy):
 
         # set parameters
         assert self.n_robots == policy_config.num_robots, "Number of robots mismatch"
-        self.n_obs_steps = policy_config.n_obs_steps
-        self.action_update_count = policy_config.n_action_steps
         self.control_mode = policy_config.control_mode
         self.gripper_mode = GripperMode.robot_mode_to_gripper_mode(policy_config.robot_mode)
         if self.gripper_mode in [GripperMode.BINARY, GripperMode.CONTINUOUS]:
@@ -104,22 +103,22 @@ class NN_policy(Empty_NN_policy):
         if self.use_gripper:
             self.prev_gripper_cmd = torch.ones(self.n_robots).unsqueeze(0)  # (B, n_robots)
 
-    def __call__(self, **args):
+    def __call__(self, **kwargs):
         # pre-process input data
-        qpos = args["qpos"].astype(np.float32)  # (n_joints * n_robots)
-        qvel = args["qvel"].astype(np.float32)  # (n_joints * n_robots)
-        end_pose = args["end_pos"].astype(np.float32)  # (6 * n_robots)
-        end_vel = args["end_vel"].astype(np.float32)  # (6 * n_robots)
+        qpos = kwargs["qpos"].astype(np.float32)  # (n_joints * n_robots)
+        qvel = kwargs["qvel"].astype(np.float32)  # (n_joints * n_robots)
+        end_pose = kwargs["end_pose"].astype(np.float32)  # (6 * n_robots)
+        end_vel = kwargs["end_vel"].astype(np.float32)  # (6 * n_robots)
         
         cam_data_dict = dict()
         for cam_name in self.task_config.camera_config.cam_names:
-            cam_data_dict[f"observation.images.rgb.{cam_name}"] = args[f"images.rgb.{cam_name}"].astype(np.float32)  # (H, W, C)
-            if args.get(f"images.depth.{cam_name}") is not None:
-                cam_data_dict[f"observation.images.depth.{cam_name}"] = args[f"images.depth.{cam_name}"][..., np.newaxis]  # (H, W, 1)
+            cam_data_dict[f"observation.images.rgb.{cam_name}"] = kwargs[f"images.rgb.{cam_name}"].astype(np.float32)  # (H, W, C)
+            if kwargs.get(f"images.depth.{cam_name}") is not None:
+                cam_data_dict[f"observation.images.depth.{cam_name}"] = kwargs[f"images.depth.{cam_name}"][..., np.newaxis]  # (H, W, 1)
                 
         if self.use_gripper:  ###################
-            gripper_pos = args["gripper_pos"].astype(np.float32)  # (n_robots)
-            grasp_state = args["grasp_state"].astype(np.float32)  # (n_robots)
+            gripper_pos = kwargs["gripper_pos"].astype(np.float32)  # (n_robots)
+            grasp_state = kwargs["grasp_state"].astype(np.float32)  # (n_robots)
             gripper_pos_data = torch.from_numpy(gripper_pos).unsqueeze(0)  # (B, n_robots)
             grasp_state_data = torch.from_numpy(grasp_state).unsqueeze(0)  # (B, n_robots)
                 

@@ -9,7 +9,7 @@ CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
             "ip": "192.168.0.111",
             "home_pos": [0., 0, -90., 0., -90., 0.],
             "gripper": {
-                "enable": True,
+                "enable": False,
                 "type": "RobotiqUSBClient",
                 "params": {
                     "port": "/dev/robotiq_2f85"
@@ -45,7 +45,7 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
     
     model_config = MODEL_CONFIG(
         model_type = "act",
-        model_dir = "/home/nrmk/neuromeka-il/train/weights/pick_and_place/2025-08-21-21-31-23",
+        model_dir = "/home/nrmk/neuromeka-il/train/weights/broom/2025-08-21-21-31-21",
         model_file = "policy_last.ckpt",
         success_threshold = 0.8,
         device = "cuda",
@@ -55,6 +55,6 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
     data_config = None,
     
     extra_config = EXTRA_CONFIG(
-        control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 265.}})
+        control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 306.}})
     )
 )

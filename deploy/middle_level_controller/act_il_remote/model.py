@@ -88,7 +88,7 @@ class NN_policy(Empty_NN_policy):
         if self.use_gripper:
             data["proprioception"]["gripper_pos"] = kwargs["gripper_pos"]
             data["proprioception"]["grasp_state"] = kwargs["grasp_state"]
-            data["proprioception"]["prev_gripper_command"] = kwargs["prev_gripper_command"]
+            data["proprioception"]["prev_gripper_command"] = self.prev_gripper_cmd
         
         # Request nn model control
         response = self.client.send_data(data={"operation": "step", "data": data})
@@ -145,6 +145,6 @@ class NN_policy(Empty_NN_policy):
                     gripper_cmd = np.round(gripper_cmd)  # 0 or 1
 
                 action_dict[f"gripper_action_{robot_id}"] = gripper_cmd
-                self.prev_gripper_cmd[:, robot_id] = gripper_cmd
+                self.prev_gripper_cmd[robot_id] = gripper_cmd
 
         return action_dict

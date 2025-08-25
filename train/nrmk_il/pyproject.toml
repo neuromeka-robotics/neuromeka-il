@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "nrmk_il"
 version = "1.0.0"
 description = "Neuromeka imitation learning framework"
-license = "BSD-3-Clause"
 authors = [
   { name = "Yunho Kim", email = "yunho.kim@neuromeka.com" },
   { name = "Quan Nguyen", email = "quan.nguyen@neuromeka.com" },
@@ -16,7 +15,6 @@ dependencies = []
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-license-files = ["LICENSE*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,10 +1,7 @@
-/data
-/data_viz
-/processed_data
-/weights
-/wandb
-/outputs
-*.h5
-*.pkl
-*.mp4
+/data/
+/data_viz/
+/processed_data/
+/weights/
+/wandb/
+/outputs/
 *.egg-info

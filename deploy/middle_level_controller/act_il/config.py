@@ -51,7 +51,16 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         device = "cuda"
     ),
     
+    # Set data_config as None to disable DAGGER
     data_config = None,
+    
+    # # Set data_config correctly to enable DAGGER
+    # data_config = DATA_CONFIG(
+    #     device_type = "vive",
+    #     device_params = {
+    #         "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
+    #     }
+    # ),
     
     extra_config = EXTRA_CONFIG(
         control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 306.}})

@@ -72,29 +72,6 @@ class NN_controller(Base_NN_controller):
             self._control_thread.join()
             self._control_thread = None
 
-    def exec_start_movement(self):
-        ##############################################
-        # Add processed to run BEFORE task execution #
-        ##############################################
-        for robot_id in self.ROBOT_IDS:
-            self.set_teleop(robot_id, mode="task_abs")
-        
-        # open gripper if enabled
-        self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.ROBOT_IDS})
-        return NN_CONTROL_STATE.TASK_IN_PROGRESS
-
-    def exec_finish_movement(self):
-        #############################################
-        # Add processed to run AFTER task execution #
-        #############################################
-        for robot_id in self.ROBOT_IDS:
-            self.set_idle(robot_id)
-            
-        if self.control_state == NN_CONTROL_STATE.TASK_FINISH:
-            return NN_CONTROL_STATE.TASK_SUCCESS
-        else:
-            return NN_CONTROL_STATE.TASK_FAIL
-
     def _nn_control_fn(self, duration: float):
         # check task-specific home position for ALL robots!
         states = self.robot_cluster.get_state(robot_ids=self.ROBOT_IDS)

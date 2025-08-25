@@ -57,37 +57,20 @@ class DataCollectionScheduler(Controller):
         self.data_collector = TeleopDataCollector(
             robot_config=self.ROBOT_CONFIG,
             task_config=self.TASK_CONFIG,
-            dagger_mode=False
+            dagger_mode=kwargs.get("dagger_mode", False)
         )
         self.control_mode = self.data_collector.get_control_mode()
         
         # set empty variable
         self._collection_triggered = False
         self._collection_thread = None
-        
-    def exec_start_movement(self):
-        ###################################################
-        # Add processed to run BEFORE collector execution #
-        ###################################################
-        for robot_id in self.ROBOT_IDS:
-            self.set_teleop(robot_id, mode=self.control_mode)
-        
-        # open gripper if enabled
-        self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.ROBOT_IDS})
-        
-    def exec_finish_movement(self):
-        #############################################
-        # Add processed to run AFTER task execution #
-        #############################################
-        for robot_id in self.ROBOT_IDS:
-            self.set_idle(robot_id)
 
     def exec_collection(self, mode: str):
         if not self._collection_triggered:
             assert mode in ["start", "current"]
             if mode == "start":
                 # stop nn control + move to start joint position
-                self.exec_home_pos(wait=True)
+                self.exec_home_movement(wait=True)
                 
             self._collection_triggered = True
             

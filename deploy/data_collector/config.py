@@ -1,6 +1,7 @@
 import os
 from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
+from helper.extra_utils import home_movement_w_gripper
 
 
 DATA_COLLECTOR_ROBOT_CONFIG = ROBOT_CONFIG(
@@ -9,7 +10,7 @@ DATA_COLLECTOR_ROBOT_CONFIG = ROBOT_CONFIG(
             "ip": "192.168.0.111",
             "home_pos": [0., 0, -90., 0., -90., 0.],
             "gripper": {
-                "enable": False,
+                "enable": True,
                 "type": "RobotiqUSBClient",
                 "params": {
                     "port": "/dev/robotiq_2f85"
@@ -28,7 +29,7 @@ DATA_COLLECTOR_ROBOT_CONFIG = ROBOT_CONFIG(
 )
 
 DATA_COLLECTOR_TASK_CONFIG = TASK_CONFIG(
-    name = "broom",  # Task name to collect data
+    name = "pick_and_place",  # Task name to collect data
     
     camera_config = CAMERA_CONFIG(
         cam_params = {
@@ -53,7 +54,7 @@ DATA_COLLECTOR_TASK_CONFIG = TASK_CONFIG(
     ),
     
     extra_config = EXTRA_CONFIG(
-        control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 306.}})
+        home_movement_fn = home_movement_w_gripper,
+        control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 265.}})
     )
 )
-        

@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
             if CURRENT_COMMAND == COMMAND_MACHINE.MOVE_TO_TASK_HOME:
                 print(f"COMMAND: MOVE_TO_TASK_HOME")
-                data_collection_scheduler.exec_home_pos()
+                data_collection_scheduler.exec_home_movement(wait=False)
             elif CURRENT_COMMAND == COMMAND_MACHINE.EXECUTE_START_STATE_COLLECTION:
                 print(f"COMMAND: EXECUTE_START_STATE_COLLECTION")
                 data_collection_scheduler.exec_collection(mode="start")

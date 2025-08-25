@@ -36,6 +36,24 @@ class Controller:
                 
         self.robot_cluster = RobotCluster(robots=self.robot)
         self.exec_set_idle()
+        
+    def exec_home_movement(self, wait: bool = False):
+        #############################################################
+        # Define process to run for home pos execution in config.py #
+        #############################################################
+        self.TASK_CONFIG.extra_config.home_movement_fn(self, wait)
+        
+    def exec_start_movement(self):
+        #######################################################################
+        # Define process to run BEFORE main controller execution in config.py #
+        #######################################################################
+        self.TASK_CONFIG.extra_config.start_movement_fn(self)
+        
+    def exec_finish_movement(self):
+        ######################################################################
+        # Define process to run AFTER main controller execution in config.py #
+        ######################################################################
+        self.TASK_CONFIG.extra_config.finish_movement_fn(self)
 
     def exec_home_pos(self, wait=False):
         for robot_id in self.ROBOT_IDS:
@@ -179,7 +197,10 @@ class Base_NN_controller(Controller):
         # set robot
         super(Base_NN_controller, self).__init__(robot=robot, **kwargs)
         
-        # set nn policy
+        # set empty camera
+        self.camera = {}
+        
+        # set empty nn policy
         self.nn_policy: Union[Empty_NN_policy] = Empty_NN_policy(robot_config=self.ROBOT_CONFIG, task_config=self.TASK_CONFIG)
         
     def load_policy(self):
@@ -192,10 +213,21 @@ class Base_NN_controller(Controller):
         raise NotImplementedError
     
     def exec_start_movement(self):
-        return None
-
+        #######################################################################
+        # Define process to run BEFORE main controller execution in config.py #
+        #######################################################################
+        self.TASK_CONFIG.extra_config.start_movement_fn(self)
+        return NN_CONTROL_STATE.TASK_IN_PROGRESS
+        
     def exec_finish_movement(self):
-        return None
+        ######################################################################
+        # Define process to run AFTER main controller execution in config.py #
+        ######################################################################
+        self.TASK_CONFIG.extra_config.finish_movement_fn(self)
+        if self.control_state == NN_CONTROL_STATE.TASK_FINISH:
+            return NN_CONTROL_STATE.TASK_SUCCESS
+        else:
+            return NN_CONTROL_STATE.TASK_FAIL
     
     def _reset_control(self):
         self.nn_policy.reset()

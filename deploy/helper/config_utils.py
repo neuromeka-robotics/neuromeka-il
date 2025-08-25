@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Callable
 import os
 
+from helper.extra_utils import default_home_movement, default_start_movement, default_finish_movement
+
 from nrmk_il.helper.utils import get_base_dir
 
 @dataclass
@@ -100,8 +102,11 @@ class DATA_CONFIG:
         
 @dataclass
 class EXTRA_CONFIG:
-    control_post_process_fn : Callable | None = lambda x: x
-
+    home_movement_fn: Callable = default_home_movement
+    start_movement_fn: Callable = default_start_movement
+    finish_movement_fn: Callable = default_finish_movement
+    
+    control_post_process_fn : Callable = lambda x: x
 
 @dataclass
 class TASK_CONFIG:

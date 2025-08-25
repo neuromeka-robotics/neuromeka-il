@@ -85,3 +85,22 @@ def load_NN_controller(controller_type: str):
         raise ValueError(f"No module found for controller type '{controller_type}'") from None
     except AttributeError:
         raise ValueError(f"'NN_controller' not found in {module_path}") from None
+    
+    
+##########################################
+def default_home_movement(self, wait: bool):
+    self.exec_home_pos(wait)
+    
+def default_start_movement(self):
+    for robot_id in self.ROBOT_IDS:
+        self.set_teleop(robot_id, mode=self.control_mode)
+
+def default_finish_movement(self):
+    for robot_id in self.ROBOT_IDS:
+        self.set_idle(robot_id)
+        
+def home_movement_w_gripper(self, wait: bool):
+    self.exec_home_pos(wait)
+
+    # open gripper if enabled
+    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.ROBOT_IDS})

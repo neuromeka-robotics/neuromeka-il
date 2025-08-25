@@ -32,12 +32,17 @@ class BaseGripperClient:
         
 
 class RobotiqUSBClient(BaseGripperClient):
+    # Variable shared across instance
+    _initialized = False
+    
     def __init__(self, port = '/dev/robotiq_2f85', slave_address = 9):
         super(RobotiqUSBClient, self).__init__()
         
         from pyrobotiqgripper import RobotiqGripper as RobotiqGripperClient
         self.gripper = RobotiqGripperClient(portname=port, slaveAddress=slave_address)
-        self.initialize()
+        if not self._initialized:
+            self.initialize()
+            self._initialized = True
         
     def open(self):
         try:

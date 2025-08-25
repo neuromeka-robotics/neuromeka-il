@@ -99,8 +99,14 @@ def default_finish_movement(self):
     for robot_id in self.ROBOT_IDS:
         self.set_idle(robot_id)
         
-def home_movement_w_gripper(self, wait: bool):
+def home_movement_w_open_gripper(self, wait: bool):
     self.exec_home_pos(wait)
 
     # open gripper if enabled
     self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.ROBOT_IDS})
+    
+def home_movement_w_close_gripper(self, wait: bool):
+    self.exec_home_pos(wait)
+
+    # open gripper if enabled
+    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 0. for robot_id in self.ROBOT_IDS})

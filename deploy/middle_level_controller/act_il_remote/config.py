@@ -1,7 +1,7 @@
 import os
 from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
-from helper.extra_utils import home_movement_w_gripper
+from helper.extra_utils import home_movement_w_open_gripper
 
 
 CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
@@ -56,7 +56,7 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
     data_config = None,
     
     extra_config = EXTRA_CONFIG(
-        home_movement_fn = home_movement_w_gripper,
+        home_movement_fn = home_movement_w_open_gripper,
         control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 265.}})
     )
 )

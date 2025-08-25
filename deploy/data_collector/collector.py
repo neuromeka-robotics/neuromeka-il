@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 # helper functions
 from helper.extra_utils import ROBOT_STATE, KeyboardListener
 from helper.controller_utils import Controller
-from perception_module.realsense import RealsenseCamHandler
+from perception.realsense import RealsenseCamHandler
 from data_collector.device.base import BaseDevice
 
 # communication

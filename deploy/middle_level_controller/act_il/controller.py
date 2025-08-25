@@ -11,7 +11,7 @@ from helper.controller_utils import Base_NN_controller, Empty_NN_policy
 
 # communication
 from communication.robot import Robot
-from perception_module.realsense import RealsenseCamHandler
+from perception.realsense import RealsenseCamHandler
 
 # nn models
 from middle_level_controller.act_il.model import *

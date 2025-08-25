@@ -18,7 +18,7 @@ from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
 from helper.extra_utils import load_NN_controller
 
 # communication
-from perception_module.realsense import RealsenseCamHandler
+from perception.realsense import RealsenseCamHandler
 
 # grpc protocols for conty
 import conty.grpc.mimic_msgs_pb2 as mimic_data

@@ -7,9 +7,10 @@ from threading import Thread
 from statemachine import StateMachine, State
 
 from communication.robot import Robot
-from helper.extra_utils import KeyboardListener, load_NN_controller, NN_CONTROL_STATE
-from helper.controller_utils import Base_NN_controller
 from perception.realsense import RealsenseCamHandler
+
+from helper.extra_utils import load_NN_controller, NN_CONTROL_STATE
+from helper.controller_utils import Base_NN_controller
 
 
 class FSM(StateMachine):

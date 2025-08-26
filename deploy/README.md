@@ -2,7 +2,7 @@
 
 The `deploy` directory contains the necessary code to collect demonstration data and run the trained policy with real Neuromeka robots (e.g., [Indy7](https://en.neuromeka.com/indy)).
 
-## Real world configurations
+## Real-world configurations
 Data collection and policy deployment both require the configuration of necessary components. The base configurations are located in `helper/config_utils.py`. The specific configurations required are listed below.
 
 - **ROBOT_CONFIG**: Robot configuration (e.g., robot ip, robot home position in joint-space, control parameters)
@@ -18,7 +18,7 @@ Data collection and policy deployment both require the configuration of necessar
 - `middle_level_controller/act_il_remote/config.py`: Configuration for task `act_il_remote` controller. Define `CUSTOM_ROBOT_CONFIG` and `CUSTOM_TASK_CONFIG`.
 
 ## Data collection
-Most imitation learning requires collecting demonstration data by teleoperating real world robots. The codebase supports teleoperating Neuromeka robots with [VIVE Pro 2](https://www.vive.com/us/product/vive-pro2-full-kit/overview/). Follow below three steps.
+Most imitation learning requires collecting demonstration data by teleoperating real-world robots. The codebase supports teleoperating Neuromeka robots with [VIVE Pro 2](https://www.vive.com/us/product/vive-pro2-full-kit/overview/). Follow below three steps.
 
 ### 1. Calibrate VIVE Pro 2
 Calibrate vive with Neuromeka Conty. Then, copy-paste the calibration result from the Control Box PC (path: `/home/user/release/IndyDeployment/TeleOp/Calibs/*.json`) to DATA_CONFIG.device_params["calib_uvw"].
@@ -41,23 +41,25 @@ The high-level command is assigned to the robot by keyboard. The keyboard comman
 
 Teleoperation begins when the menu button on Vive is clicked once, and ends when it is clicked again. The gripper command is given by pressing the trigger button on the back of the Vive controller. When the teleoperation is completed, the user is asked whether or not to save the data. To save, click 's'; to not save, press 'e'.
 
+By default, raw data are stored in `train/data/TASK_NAME` as `*.h5` files, and the corresponding visualizations are saved in `train/data_viz/TASK_NAME`.
+
+Example real-world data are available in `unit_test/example/data`, with corresponding visualizations in `unit_test/example/data_viz`.
+
 
 ## Deploy controller trained with imitation learning
-After training imitation learning models with the code in `train` or other third-party libraries, they can be evaluated in the real world by following the three steps outlined below.
+After training imitation learning models with the code in `train` or other third-party libraries, they can be evaluated in the real-world by following the three steps outlined below.
 
 ### 1. Add task controller
 Because of the potential differences between task and model design, controllers are intended to be defined for each task. Specifically, each task controller should be listed below `middle_level_controller`, with the folder name matching the task name. Then, `config.py`, `model.py`, and `controller.py` should be added below the task folder, with each file having the following roles:
 
 - `config.py`: Configuration for the corresponding task controller. Define `CUSTOM_ROBOT_CONFIG` and `CUSTOM_TASK_CONFIG`.
-- `model.py`: Model wrapper to include preprocess and postprocess step. Define `NN_policy`.
+- `model.py`: Model wrapper to include model loading, input preprocessing, model inference, and output postprocessing. Define `NN_policy`.
 - `controller.py`: Policy wrapper to connect with robots and sensors. Define `NN_controller`.
 
-To help implementing above for each task, we provide general implementation to deploy any task trained with [ACT (i.e., Action Chunking Transformer)]((https://arxiv.org/abs/2304.13705)) with model implemenentaions provided in `train` in `middle_level_controller/act_il`.
-
-We offer a general implementation to deploy any task trained with ACT in `middle_level_controller/act_il` to aid in the above implementation for each task.
+We offer a general implementation to deploy any task trained with [ACT (i.e., Action Chunking Transformer)](https://arxiv.org/abs/2304.13705) in `middle_level_controller/act_il` to aid in the above implementation for each task.
 
 ### 2. Set task name
-In `task_demo.py`, specify the task name to evaluate in `demo_task = TASK_NAME`. `TASK_NAME` should be an existing folder beneath `middle_level_controller`.
+In `task_demo.py`, specify the task name to evaluate as `demo_task = TASK_NAME`. `TASK_NAME` should be an existing folder beneath `middle_level_controller`.
 
 ### 3. Evaluate task controller
 Run task controller.
@@ -74,10 +76,12 @@ The high-level command is assigned to the robot by keyboard. The keyboard comman
 | 3          |    EXECUTE_START_STATE_DAGGER    | Stop task controller and collect data after moving to robot home position |
 | 4          |   EXECUTE_CURRENT_STATE_DAGGER   | Stop task controller and collect data from current robot position         |
 
-During model evaluation, we support [DAGGER]((https://arxiv.org/abs/1011.0686)), which allows a human to intervene when the model enters a potential failure mode and collect additional data for retraining. In our experience, DAGGER is critical for improving the performance of models trained with imitation learning. To enable DAGGER during evaluation, set `DATA_CONFIG` appropriately in `CUSTOM_TASK_CONFIG`. If `DATA_CONFIG` is *None*, DAGGER will be disabled.
+During model evaluation, we support [DAGGER](https://arxiv.org/abs/1011.0686), which allows a human to intervene when the model enters a potential failure mode and collect additional data for retraining. In our experience, DAGGER is critical for improving the performance of models trained with imitation learning. 
 
-## Deploy controller using third-party models
-There are many imitation learning models developed by researchers beyond ACT. To evaluate third-party models that are not included in train—and to avoid conda environment conflicts—we provide a server-client example in `middle_level_controller/act_il_remote`.
+To enable DAGGER during evaluation, set `DATA_CONFIG` appropriately in `CUSTOM_TASK_CONFIG`. If `DATA_CONFIG` is *None*, DAGGER will be disabled.
+
+## Deploy controller trained with third-party models
+There are many imitation learning models developed by researchers beyond ACT. To evaluate third-party models that are not included in `train`—and to avoid conda environment conflicts—we provide a server-client example in `middle_level_controller/act_il_remote`.
 
 In this setup, two processes need to be run: the robot controller (client) and the model (server).
 

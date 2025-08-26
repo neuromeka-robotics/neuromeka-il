@@ -42,7 +42,7 @@ Check [train/README.md](train/README.md) and [deploy/README.md](deploy/README.md
 The recommended steps to follow are outlined below:
 1. [Collect data](deploy/README.md#data-collection)
 2. [Train model](train/README.md)
-3. [Evaluate model in real world](deploy/README.md#deploy-controller-trained-with-imitation-learning)
+3. [Evaluate model in real-world](deploy/README.md#deploy-controller-trained-with-imitation-learning)
 
 
 ## Credits

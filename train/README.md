@@ -82,7 +82,7 @@ python imitate.py --config-path=config/fake_data_example --config-name=dual_robo
 We also provide configuration files for training imitation policies with real-world data in `config/real_data_example`.
 
 ## Real data examples
-Compatible data examples from the real world are given in `unit_test/example/data`. Data are collected using the teleoperation code provided in `deploy`.
+Compatible real-world data can be found in `unit_test/example/data`, and the corresponding visualized data are located in `unit_test/example/data_viz`. Data are collected using the teleoperation code provided in `deploy`.
 
 ## Training plot examples
 [Wandb](https://wandb.ai/site/) can be enabled in the configuration file (`logging: True`) to visualize training progress. Below is an example results for single robot arm task.

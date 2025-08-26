@@ -1,6 +1,8 @@
 from typing import Dict, List
 
 import os
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+    
 import re
 import sys
 match = re.search(r'(.*/deploy/)', os.path.abspath(__file__))
@@ -22,10 +24,10 @@ from perception.realsense import RealsenseCamHandler
 
 # grpc protocols for conty
 import conty.grpc.mimic_msgs_pb2 as mimic_data
-import conty.grpc.mimic_msgs_pb2 as mimic_grpc
+import conty.grpc.mimic_pb2_grpc as mimic_grpc
 
 PC_DEVICE_PORT = 20500
-MAX_CONTROL_DURATION = 4  # s
+MAX_CONTROL_DURATION = 6  # s
 
 
 class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
@@ -39,7 +41,7 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         self._robot_ips: Dict[str, str] = {}
         self._robot_home_pos: Dict[str, List[float]] = {}
         self._checked_feasibility = False
-        self._camera: Dict[str, RealsenseCamHandler] | None = None
+        self._camera: Dict[str, RealsenseCamHandler] | None = {}
         
         # Initialize
         self._robot_skills = os.listdir(os.path.join(BASE_DIR, "middle_level_controller"))
@@ -109,14 +111,14 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         return mimic_data.MimicSkillList(skill_list=available_skills)
         
     def GetSkillHome(self, request: mimic_data.MimicSkillName, context) -> mimic_data.GetSkillHomeRes:
-        print(f"Get Skill Home called with {request.name}")
+        print(f"Get home pos for skill {request.name}")
         skill = request.name
         assert skill in self._robot_home_pos.keys(), f"Home positiion for '{skill}' not defined"
         
         return mimic_data.GetSkillHomeRes(jpos=self._robot_home_pos[skill])
     
     def RunSkill(self, request: mimic_data.MimicSkillName, context) -> mimic_data.Response:
-        print("RunSkill called")
+        print(f"Run skill {request.name}")
         skill = request.name
         
         # Set controller
@@ -131,7 +133,7 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         return mimic_data.Response()
     
     def StopSkill(self, request: mimic_data.Empty, context) -> mimic_data.Response:
-        print("StopSkill called")
+        print("Stop skill")
         for skill in self.nn_controllers.keys():
             self.nn_controllers[skill].exec_nn_control_stop()
             
@@ -139,10 +141,10 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         
         
 if __name__ == "__main__":
-    print("Running in main")
     import grpc
     from concurrent import futures
-
+    
+    # Start MoveMimicServicer
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10),
                          options=
                          [('grpc.max_send_message_length', 10 * 1024 * 1024),

@@ -114,7 +114,7 @@ if __name__ == "__main__":
     # Set robot
     robot = {
         0: Robot(
-            robot_ip = "192.168.0.111",
+            robot_ip = "192.168.0.147",
             gripper_config = {
                 "enable": True,
                 "type": "RobotiqUSBClient",

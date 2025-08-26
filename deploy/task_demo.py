@@ -55,8 +55,8 @@ if __name__ == "__main__":
         
         # Overwrite robot and task configurations for data collector
         module = importlib.import_module(f"middle_level_controller.{demo_task}.config")
-        DATA_COLLECTOR_ROBOT_CONFIG: ROBOT_CONFIG = module.CUSTOM_ROBOT_CONFIG
-        DATA_COLLECTOR_TASK_CONFIG: TASK_CONFIG = module.CUSTOM_TASK_CONFIG
+        DataCollectionScheduler.ROBOT_CONFIG = module.CUSTOM_ROBOT_CONFIG
+        DataCollectionScheduler.TASK_CONFIG = module.CUSTOM_TASK_CONFIG
         
         data_collection_scheduler: Controller = DataCollectionScheduler(
             robot=nn_controller.robot,

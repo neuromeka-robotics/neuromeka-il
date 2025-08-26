@@ -6,6 +6,15 @@ base:
   num_workers: 4
   logging: False  # [Option] Can enable wandb logging
 
+  # Required for DAGGER
+  # Option 1. Generate new model directory and just load the model weights
+  pretrained_ckpt_dir: /home/nrmk/neuromeka-il/train/weights/pick_and_place/2025-08-21-21-31-23
+
+  # # Option 2. Keep track of the model directory
+  # # The model is saved as "policy_last.ckpt" -> "policy_dagger_1.ckpt" -> "policy_dagger_2.ckpt" ...
+  # model_name: 2025-08-21-21-31-23  # Model to finetune
+  # dagger_mode: True
+
 ### Train configuration
 train:
   num_epochs: 10000

@@ -15,7 +15,8 @@ class BaseConfig:
     num_workers: int = 1
     logging: bool = True
 
-    model_name: str | None = None  # Only required for dagger_mode
+    # Only required for dagger_mode
+    model_name: str | None = None
     dagger_mode: bool = False
 
     # pretrained model directory

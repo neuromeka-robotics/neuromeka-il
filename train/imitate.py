@@ -260,17 +260,7 @@ def main(cfg):
     check_dir(base_config.ckpt_dir, generate=True)
     print(f"checkpoint dir: {base_config.ckpt_dir}\n")
     
-    if base_config.pretrained_ckpt_dir is not None:
-        # Load pre-trained statistics
-        pretrained_stats_path = os.path.join(base_config.pretrained_ckpt_dir, "dataset_stats.pkl")
-        with open(pretrained_stats_path, "rb") as f:
-            stats_np = pickle.load(f)
-        
-        for k in stats_np.keys():
-            stats[k]["mean"] = torch.from_numpy(stats_np[k]["mean"])
-            stats[k]["std"] = torch.from_numpy(stats_np[k]["std"])
-        print(f"Loaded stats: {pretrained_stats_path}")
-    elif base_config.dagger_mode:
+    if base_config.dagger_mode:
         # Load initial statistics
         stats_path = os.path.join(base_config.ckpt_dir, "dataset_stats.pkl")
         with open(stats_path, "rb") as f:
@@ -321,11 +311,11 @@ def main(cfg):
             pretrained_ckpt_path = os.path.join(base_config.ckpt_dir, f"policy_dagger_{collect_iter - 1}.ckpt")
             
         policy.load_state_dict(torch.load(pretrained_ckpt_path, weights_only=True))
-        print(f"Loaded model: {pretrained_ckpt_path}")
+        print(f"Loaded model: {pretrained_ckpt_path}\n")
     elif base_config.pretrained_ckpt_dir is not None:
         pretrained_ckpt_path = os.path.join(base_config.pretrained_ckpt_dir, "policy_last.ckpt")
         policy.load_state_dict(torch.load(pretrained_ckpt_path, weights_only=True))
-        print(f"Loaded model: {pretrained_ckpt_path}")
+        print(f"Loaded model: {pretrained_ckpt_path}\n")
         
     policy.cuda()
     optimizer, lr_scheduler = make_optimizer(train_config, base_config.policy_class, policy)

@@ -252,15 +252,20 @@ class TeleopDataCollector:
                 collect_iters = []
                 for k in collect_progress.keys():
                     collect_iters.append(int(k.split("_")[-1]))
-                current_collect_iter = max(collect_iters) + 1
+                    
+                if collect_progress[f"iter_{max(collect_iters)}"] != self.traj_num:
+                    # New iteration
+                    current_collect_iter = max(collect_iters) + 1
+                else:
+                    current_collect_iter = max(collect_iters)
             else:
                 collect_progress = dict()
                 current_collect_iter = 1
+                
+            collect_progress[f"iter_{current_collect_iter}"] = self.traj_num
             
-            if collect_progress[f"iter_{current_collect_iter - 1}"] != self.traj_num:
-                collect_progress[f"iter_{current_collect_iter}"] = self.traj_num  # the starting data point in current iteration
-                with open(collect_progress_file, "w") as f:
-                    json.dump(collect_progress, f)
+            with open(collect_progress_file, "w") as f:
+                json.dump(collect_progress, f)
             
         # initialize data buffer
         self.init_data_buffer()

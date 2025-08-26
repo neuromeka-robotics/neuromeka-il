@@ -7,7 +7,7 @@ from helper.extra_utils import home_movement_w_open_gripper
 DATA_COLLECTOR_ROBOT_CONFIG = ROBOT_CONFIG(
     robot_params = {
         0: {
-            "ip": "192.168.0.111",
+            "ip": "192.168.0.147",
             "home_pos": [0., 0, -90., 0., -90., 0.],
             "gripper": {
                 "enable": True,

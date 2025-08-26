@@ -255,10 +255,10 @@ def run_fake_client(args):
                     },
                     "images": {
                         "left": {
-                            "rgb": np.random.randint(0, 256, (640, 480, 3), dtype=np.uint8)
+                            "rgb": np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
                         },
                         "right": {
-                            "rgb": np.random.randint(0, 256, (640, 480, 3), dtype=np.uint8)
+                            "rgb": np.random.randint(0, 256, (480, 640, 3), dtype=np.uint8)
                         }
                     }
                 }

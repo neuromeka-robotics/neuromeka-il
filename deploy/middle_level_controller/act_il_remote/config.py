@@ -7,7 +7,7 @@ from helper.extra_utils import home_movement_w_open_gripper
 CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
     robot_params = {
         0: {
-            "ip": "192.168.0.111",
+            "ip": "192.168.0.147",
             "home_pos": [0., 0, -90., 0., -90., 0.],
             "gripper": {
                 "enable": True,
@@ -53,7 +53,16 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         port = 5555
     ),
     
+    # Set data_config as None to disable DAGGER
     data_config = None,
+    
+    # # Set data_config correctly to enable DAGGER
+    # data_config = DATA_CONFIG(
+    #     device_type = "vive",
+    #     device_params = {
+    #         "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
+    #     }
+    # ),
     
     extra_config = EXTRA_CONFIG(
         home_movement_fn = home_movement_w_open_gripper,

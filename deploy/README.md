@@ -39,7 +39,7 @@ The high-level command is assigned to the robot by keyboard. The keyboard comman
 | 2          |  EXECUTE_START_STATE_COLLECTION  |Collect data after moving to robot home position    |
 | 3          | EXECUTE_CURRENT_STATE_COLLECTION |Collect data from current robot position            |
 
-Teleoperation begins when the menu button on Vive is clicked once, and ends when it is clicked again. The gripper command is given by pressing the trigger button on the back of the Vive controller. When the teleoperation is completed, the user is asked whether or not to save the data. To save, click 's'; to not save, press 'e'.
+Teleoperation begins when the "toggle down" button on Vive is clicked once, and ends when it is clicked again. The gripper command is given by pressing the "trigger" button on the back of the Vive controller. When the teleoperation is completed, the user is asked whether or not to save the data. To save, click 's'; to not save, press 'e'.
 
 By default, raw data are stored in `train/data/TASK_NAME` as `*.h5` files, and the corresponding visualizations are saved in `train/data_viz/TASK_NAME`.
 

@@ -20,7 +20,7 @@ This repository contains an implementation for training neural network controlle
     cd neuromeka-il
     ```
 
-2.  Create a conda environment using the provided `environment.yaml` or `environment_train.yaml` file. The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with CUDA 12.1 on NVIDIA RTX 4090.
+2.  Create a conda environment using the provided `environment.yaml` or `environment_train.yaml` file. The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with NVIDIA RTX 3060 + CUDA 11.7 and NVIDIA RTX 4090 + CUDA 12.1.
     ```bash
     # Option 1: Generate conda environment for both TRAIN and DEPLOY
     conda env create -f environment.yaml -n env_il

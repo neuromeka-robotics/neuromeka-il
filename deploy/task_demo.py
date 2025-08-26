@@ -47,6 +47,9 @@ if __name__ == "__main__":
     
     # Check DAGGER and set data_collector if necessary
     if nn_controller.TASK_CONFIG.data_config is not None:
+        ####################
+        ## DAGGER enabled ##
+        ####################
         import importlib
         from helper.controller_utils import Controller
         from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
@@ -64,6 +67,9 @@ if __name__ == "__main__":
             dagger_mode=True
         )
     else:
+        #####################
+        ## DAGGER disabled ##
+        #####################
         data_collection_scheduler = None
     
     # Set keyboard listener

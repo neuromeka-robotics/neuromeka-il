@@ -7,7 +7,7 @@ Data collection and policy deployment both require the configuration of necessar
 
 - **ROBOT_CONFIG**: Robot configuration (e.g., robot ip, robot home position in joint-space, control parameters)
 - **TASK_CONFIG**: Task configuration (e.g., task name + CAMERA_CONFIG / MODEL_CONFIG / DATA_CONFIG / EXTRA_CONFIG)
-    - **CAMERA_CONFIG**: Camera configuration Current code only includes [realsense camera](https://www.intel.com/content/www/us/en/ark/products/series/85364/intel-realsense-cameras.html) (e.g., serial number, camera-specific parameters)
+    - **CAMERA_CONFIG**: Camera configuration. Current code only includes [realsense camera](https://www.intel.com/content/www/us/en/ark/products/series/85364/intel-realsense-cameras.html) (e.g., serial number, camera-specific parameters)
     - **MODEL_CONFIG**: Imitation learning model configuration (e.g., model type, model path)
     - **DATA_CONFIG**: Data collection configuration (e.g., path to save data, path to save visualization data, teleoperation device)
     - **EXTRA_CONFIG**: Extra configuration. Currently, it includes movement functions that should be defined in a task-specific manner.
@@ -31,7 +31,7 @@ Run data collector.
 ```bash
 python collect_data.py
 ```
-The high-level command is assigned to the robot by keyboard. The keyboard commands in the present setting are as follows:
+The high-level command is assigned by keyboard. The keyboard commands in the present setting are as follows:
 
 |  Keyboard  |              Command             |                     Description                    |
 |:----------:|:--------------------------------:|:--------------------------------------------------:|
@@ -66,7 +66,7 @@ Run task controller.
 ```bash
 python task_demo.py
 ```
-The high-level command is assigned to the robot by keyboard. The keyboard commands in the present setting are as follows:
+The high-level command is assigned by keyboard. The keyboard commands in the present setting are as follows:
 
 |  Keyboard  |              Command             |                               Description                                 |
 |:----------:|:--------------------------------:|:-------------------------------------------------------------------------:|

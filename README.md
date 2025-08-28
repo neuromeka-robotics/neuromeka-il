@@ -44,6 +44,7 @@ The recommended steps to follow are outlined below:
 2. [Train model](train/README.md)
 3. [Evaluate model in real-world](deploy/README.md#deploy-controller-trained-with-imitation-learning)
 
+For a detailed walkthrough, check out the [tutorial slides](/Neuromeka_IL_tutorial.pdf), which explain how to use this repository.
 
 ## Credits
 The algorithm code in `train/nrmk_il/src/nrmk_il/policies` are modified version from [LeRobot](https://github.com/huggingface/lerobot), which is licensed under the Apache-2.0 license.

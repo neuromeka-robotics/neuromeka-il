@@ -174,11 +174,11 @@ def train_bc(
                     iter_summary[key] = value
                 else:
                     iter_summary[key] += value
-            
-        if config.logging:
-            for key in iter_summary.keys():
-                iter_summary[key] = iter_summary[key] / count
+        
+        for key in iter_summary.keys():
+            iter_summary[key] = iter_summary[key] / count
                 
+        if config.logging:
             train_logger.store_log(iter_summary)
             
         # Train success detector

@@ -87,6 +87,10 @@ class RealsenseCam:
         devices = self.ctx.query_devices()
         return len(devices)
 
+    def get_device_serial_numbers(self):
+        devices = rs.context().query_devices()
+        return [device.get_info(rs.camera_info.serial_number) for device in devices]
+
 
 class RealsenseCamHandler:
     def __init__(self, serial_number=None, align=False, clipping_distance_m=None, dt=0.03, exposure=None):

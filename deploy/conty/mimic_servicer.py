@@ -20,9 +20,8 @@ from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
 from helper.extra_utils import load_NN_controller
 
 # communication
-from perception.realsense import RealsenseCamHandler
+from perception.realsense import RealsenseCamHandler, RealsenseCam
 
-# grpc protocols for conty
 import conty.grpc.mimic_msgs_pb2 as mimic_data
 import conty.grpc.mimic_pb2_grpc as mimic_grpc
 
@@ -31,7 +30,7 @@ MAX_CONTROL_DURATION = 6  # s
 
 
 class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
-    def __init__(self):
+    def __init__(self, allowed_skills=None):
         # Set empty variables
         self.robot_id: int = 0
         self.robot_ip: str | None = None
@@ -42,11 +41,13 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         self._robot_home_pos: Dict[str, List[float]] = {}
         self._checked_feasibility = False
         self._camera: Dict[str, RealsenseCamHandler] | None = {}
-        
+
         # Initialize
-        self._robot_skills = os.listdir(os.path.join(BASE_DIR, "middle_level_controller"))
+        current_file = os.path.abspath(__file__)
+        parent_dir = os.path.abspath(os.path.join(os.path.dirname(current_file), "../"))
+        self._all_skills = os.listdir(os.path.join(parent_dir, "middle_level_controller"))
         if not self._checked_feasibility:
-            self._check_feasibility()
+            self._check_feasibility(allowed_skills)
             self._checked_feasibility = True
             
     def __del__(self):
@@ -54,27 +55,46 @@ class MoveMimicPC_servicer(mimic_grpc.MoveMimicServicer):
         for cam_name in self._camera.keys():
             del self._camera[cam_name]
     
-    def _check_feasibility(self):
+    def _check_feasibility(self, allowed_skills):
         cam_configs: Dict[str, Dict] = {}
-        for skill in self._robot_skills:
+        cam_serial_numbers = RealsenseCam().get_device_serial_numbers()
+        for skill in self._all_skills:
+            # Check robot skill
+            if allowed_skills is not None and skill not in allowed_skills:
+                continue
             # Import robot and task configurations
             module = importlib.import_module(f"middle_level_controller.{skill}.config")
             robot_config: ROBOT_CONFIG = module.CUSTOM_ROBOT_CONFIG
             task_config: TASK_CONFIG = module.CUSTOM_TASK_CONFIG
             
             # Check robot config
-            assert len(robot_config.robot_ids) == 1, "Single robot is only supported for conty"
-            assert robot_config.robot_ids[0] == self.robot_id, f"Single robot ID should be {self.robot_id}"
+            if len(robot_config.robot_ids) != 1:
+                print(f"[WARNING] Only single robot is supported Conty, skill {skill} will not be available.")
+                continue
+            if robot_config.robot_ids[0] != self.robot_id:
+                print(f"[WARNING] Single robot ID should be {self.robot_id}, skill {skill} will not be available.")
+                continue
             self._robot_ips[skill] = robot_config.robot_params[self.robot_id]["ip"]
             self._robot_home_pos[skill] = robot_config.robot_params[self.robot_id]["home_pos"]
             
             # Check camera config
+            camera_config_check = True
             for cam_name in task_config.camera_config.cam_names:
+                if task_config.camera_config.cam_params[cam_name]["serial"] not in cam_serial_numbers:
+                    print(f"[WARNING] Camera {cam_name} is not connected, skill {skill} will not be available.")
+                    camera_config_check = False
+                    break
                 if cam_name in cam_configs.keys():
-                    assert cam_configs[cam_name] == task_config.camera_config.cam_params[cam_name], \
-                        f"Camera configuration mismatch for camera {cam_name} in skill {skill}"
+                    if cam_configs[cam_name] != task_config.camera_config.cam_params[cam_name]:
+                        print(f"[WARNING] Camera configuration mismatch for camera {cam_name}, skill {skill} will not be available.")
+                        camera_config_check = False
+                        break
                 else:
                     cam_configs[cam_name] = copy.deepcopy(task_config.camera_config.cam_params[cam_name])
+            if not camera_config_check:
+                continue
+            self._robot_skills.append(skill)
+
             
         # Set camera connection
         for cam_name, cam_config in cam_configs.items():

@@ -56,16 +56,16 @@ Because of the potential differences between task and model design, controllers 
 - `model.py`: Model wrapper to include model loading, input preprocessing, model inference, and output postprocessing. Define `NN_policy`.
 - `controller.py`: Policy wrapper to connect with robots and sensors. Define `NN_controller`.
 
-We offer a general implementation to deploy any task trained with [ACT (i.e., Action Chunking Transformer)](https://arxiv.org/abs/2304.13705) in `middle_level_controller/act_il` to aid in the above implementation for each task.
+We offer a general implementation to deploy any task trained with [ACT (i.e., Action Chunking Transformer)](https://arxiv.org/abs/2304.13705) in `middle_level_controller/act_il` to aid in the above implementation for each task. 
 
-### 2. Set task name
-In `task_demo.py`, specify the task name to evaluate as `demo_task = TASK_NAME`. `TASK_NAME` should be an existing folder beneath `middle_level_controller`.
+To start, duplicate `act_il` inside `middle_level_controller` directory and rename it to the your task name. Then you need to adjust its configuration to match your task.
 
-### 3. Evaluate task controller
+### 2. Evaluate task controller
 Run task controller.
 ```bash
-python task_demo.py
+python task_demo.py [TASK_NAME]
 ```
+`[TASK_NAME]` should be what you defined under `middle_level_controller` in step 1.
 The high-level command is assigned by keyboard. The keyboard commands in the present setting are as follows:
 
 |  Keyboard  |              Command             |                               Description                                 |
@@ -85,7 +85,7 @@ There are many imitation learning models developed by researchers beyond ACT. To
 
 In this setup, two processes need to be run: the robot controller (client) and the model (server).
 
-The robot controller can be launched with `python task_demo.py`, same as before.
+The robot controller can be launched with `python task_demo.py [TASK_NAME]`, same as before.
 
 To run the model, follow the three steps outlined below.
 ### 1. Implement model server

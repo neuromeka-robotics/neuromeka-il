@@ -1,4 +1,5 @@
 import time
+import sys
 from enum import Enum, auto
 
 from helper.extra_utils import KeyboardListener, load_NN_controller
@@ -34,9 +35,8 @@ class COMMAND_MACHINE(Enum):
 
 
 if __name__ == "__main__":
-    # Set task name
-    demo_task = "act_il"
-    # demo_task = "act_il_remote"
+    # Get task name from command line argument
+    demo_task = sys.argv[1]
     
     # Set nn controller and robot connection
     NN_controller = load_NN_controller(controller_type=demo_task)

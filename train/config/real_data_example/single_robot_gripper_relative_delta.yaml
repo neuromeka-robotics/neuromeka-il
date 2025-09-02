@@ -1,0 +1,85 @@
+### Base configuration
+base:
+  policy_class: act
+  task_name: pick_and_place
+  seed: 0
+  num_workers: 4
+  logging: False  # [Option] Can enable wandb logging
+
+  # # Required for DAGGER
+  # # Option 1. Generate new model directory and just load the model weights
+  # pretrained_ckpt_dir: /home/nrmk/neuromeka-il/train/weights/pick_and_place/2025-08-21-21-31-23
+
+  # # # Option 2. Keep track of the model directory
+  # # # The model is saved as "policy_last.ckpt" -> "policy_dagger_1.ckpt" -> "policy_dagger_2.ckpt" ...
+  # # model_name: 2025-08-21-21-31-23  # Model to finetune
+  # # dagger_mode: True
+
+### Train configuration
+train:
+  num_epochs: 10000
+  batch_size: 128
+  success_detector_batch_size: 32
+  lr: 1e-5
+  lr_backbone: 1e-5
+  weight_decay: 1e-4
+
+### ACT configuration
+policy: 
+  ## robot / control mode
+  robot_mode: single_robot_gripper
+  control_mode: relative_delta_task_space
+
+  ## inference
+  temporal_ensemble_momentum: null
+  n_action_steps: 10  # 0.5 s
+
+  ## input, output structure
+  n_obs_steps: 1
+  chunk_size: 20  # 1s
+
+  input_shapes: 
+    observation.images.rgb.left: [3, 224, 224]
+    observation.images.rgb.right: [3, 224, 224]
+    observation.qpos: [6] 
+    observation.qvel: [6]
+    observation.prev_gripper_command: [1]
+
+  output_shapes:
+    action.relative_delta.end_pos: [3]
+    action.relative_delta.end_ori: [6]
+    action.gripper_command: [1]
+    is_success: [1]  # [Option] Can train success detector concurrently
+
+  ## normalization/Unnormalization
+  input_normalization_modes: 
+    observation.images.rgb.left: mean_std
+    observation.images.rgb.right: mean_std
+    observation.qpos: mean_std
+    observation.qvel: mean_std
+
+  output_normalization_modes: 
+    action.relative_delta.end_pos: mean_std
+
+  ## Architecture
+  # vision backbone
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+  replace_final_stride_with_dilation: False
+  # transformer layer
+  pre_norm: False
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: relu
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+
+  # VAE
+  use_vae: False  # Recommend for relative_delta_task_space
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+
+  ## Training and loss computation
+  dropout: 0.1
+  kl_weight: 10.0

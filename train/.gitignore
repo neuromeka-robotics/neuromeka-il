@@ -1,0 +1,7 @@
+/data/
+/data_viz/
+/processed_data/
+/weights/
+/wandb/
+/outputs/
+*.egg-info

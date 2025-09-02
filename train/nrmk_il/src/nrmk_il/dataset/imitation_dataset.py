@@ -1,0 +1,615 @@
+from typing import List, Dict, Tuple, Any, Union
+
+import os
+import h5py
+import cv2
+import random
+import numpy as np
+import torch
+import torch.utils
+from torch.utils.data import DataLoader, Sampler
+import torch.utils.data
+import torchvision.transforms as transforms
+
+from nrmk_il.config.configuration_base import BaseConfig
+from nrmk_il.helper.utils import TorchRunningStats
+
+
+class ImageLoadDataset(torch.utils.data.Dataset):
+    def __init__(self, 
+                 episode_ids: List[int], 
+                 dataset_dir: str, 
+                 camera_names: List[str], 
+                 image_size: List[int], 
+                 action_horizon: int, 
+                 **kwargs):
+        super(ImageLoadDataset).__init__()
+        self.episode_ids = np.sort(episode_ids)
+        self.dataset_dir = dataset_dir
+        self.camera_names = camera_names
+        self.image_size = image_size
+        self.action_horizon = action_horizon
+
+        self.image_crop = dict() 
+        if "image_crop" in kwargs.keys():
+            for image_name, crop_area in kwargs["image_crop"].items():
+                self.image_crop[image_name] = lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
+        
+        self.image_resize = lambda img: cv2.resize(img, dsize=image_size) if image_size is not None else None
+
+        self.use_augmentation = True
+        self.augmentation = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.5,
+                contrast=0.5,
+                saturation=0.5
+            ),
+        ])
+
+        self.dataset_size_dict: dict = {}
+        self.get_replay_length()
+        self.make_replay_start_index()
+
+    def __len__(self):
+        return sum(l for _, l in self.dataset_size_dict.items())
+
+    def __getitem__(self, index: int):
+        # Get episode id and episode-wise index
+        episode_id = self.episode_ids[index >= self.start_indices][-1]
+        start_ts = index - self.start_indices[index >= self.start_indices][-1]
+
+        # Sample demonstration
+        dataset_path = os.path.join(self.dataset_dir, f"{episode_id}.h5")
+        root = h5py.File(dataset_path, "r")
+
+        out_data = dict()
+
+        # Sample trajectory in the demonstration
+        episode_len = root[list(root.keys())[0]][:].shape[0]
+        end_ts = min(start_ts + self.action_horizon, episode_len)
+        action_len = end_ts - start_ts
+        
+        # Load data
+        image_dict = {}
+        depth_dict = {}
+        for key, value in root.items():
+            if key.startswith("observation.images.rgb"):
+                temp_img = value[start_ts]
+                
+                # Crop and Resize
+                if key in self.image_crop.keys():
+                    temp_img = self.image_crop[key](temp_img)
+
+                if self.image_resize is not None:
+                    temp_img = self.image_resize(temp_img)
+                
+                image_dict[key.split('.')[-1]] = temp_img
+            elif key.startswith("observation.images.depth"):
+                temp_img = value[start_ts]
+
+                # Crop and Resize
+                if key in self.image_crop.keys():
+                    temp_img = self.image_crop[key](temp_img)
+                if self.image_resize is not None:
+                    temp_img = self.image_resize(temp_img)[..., np.newaxis]
+                
+                depth_dict[key.split('.')[-1]] = temp_img
+            elif "observation" in key:
+                value_ = value[start_ts]
+                if value_.ndim == 2 or value_.ndim == 3:
+                    if key == "observation.end_orientation":
+                        n_robots = value_.shape[0]
+                    value_ = value_.reshape(-1)
+                elif value_.ndim != 1:
+                    raise ValueError("Wrong Data Dimension")
+                out_data[key] = torch.from_numpy(value_).to(torch.float32)
+            elif "action" in key:
+                value_ = value[start_ts:end_ts]
+                if value_.ndim == 1:
+                    value_ = value_[..., np.newaxis]
+                elif value_.ndim == 3 or value_.ndim == 4:
+                    value_ = value_.reshape(action_len, -1)
+                elif value_.ndim != 2:
+                    raise ValueError("Wrong Data Dimension")
+                padded_value = np.tile(value_[-1, :], (self.action_horizon, 1))
+                padded_value[:action_len] = value_
+                is_pad = np.zeros(self.action_horizon)
+                is_pad[action_len:] = 1
+                
+                out_data[key] = torch.from_numpy(padded_value).to(torch.float32)
+                out_data["is_pad"] = torch.from_numpy(is_pad).to(torch.bool)
+            elif "is_success" == key:
+                out_data["is_success"] = torch.from_numpy(value[start_ts]).to(torch.bool)
+        
+        # Construct image
+        all_cam_images = [image_dict[cam_name] for cam_name in self.camera_names]
+        all_cam_images = np.stack(all_cam_images, axis=0)  # (n_cam, H, W, C)
+        out_data["images"] = torch.from_numpy(all_cam_images).to(torch.float32)
+        out_data["images"] = torch.einsum('k h w c -> k c h w', out_data["images"])
+        
+        # Construct depth
+        enable_depth = len(depth_dict.keys()) > 0
+        if enable_depth:
+            all_depth_images = [depth_dict[cam_name] for cam_name in self.camera_names]
+            all_depth_images = np.stack(all_depth_images, axis=0)  # (n_cam, H, W, 1)
+            out_data["depths"] = torch.from_numpy(all_depth_images).to(torch.float32)
+            out_data["depths"] = torch.einsum('k h w c -> k c h w', out_data["depths"])
+
+        image_data = out_data["images"]
+        if enable_depth:
+            depth_data = out_data["depths"]
+        
+        # Augment image
+        if self.use_augmentation:
+            image_data = image_data.to(torch.uint8)
+            for i in range(len(self.camera_names)):
+                image_data[i] = self.augmentation(image_data[i])  # apply different augmentation for each camera image
+            image_data = image_data.to(torch.float32)
+            
+        # Normalize image
+        image_data /= 255.
+            
+        # Compute action labels for relative_delta task space control
+        for idx in range(n_robots):
+            current_end_pos_w = out_data["observation.end_position"][3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            current_end_ori_w = out_data["observation.end_orientation"][9 * idx : 9 * (idx + 1)].reshape(3, 3)
+            target_end_pos_w = out_data["action.end_pos"][:, 3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            target_end_ori_w = out_data["action.end_ori"][:, 9 * idx : 9 * (idx + 1)].reshape(self.action_horizon, 3, 3)
+            
+            relative_delta_end_pos = \
+                torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
+            relative_delta_end_ori = \
+                torch.bmm(
+                    torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
+                    target_end_ori_w).reshape(self.action_horizon, -1)
+
+            if idx == 0:
+                out_data["action.relative_delta.end_pos"] = relative_delta_end_pos
+                out_data["action.relative_delta.end_ori"] = relative_delta_end_ori
+            else:
+                out_data["action.relative_delta.end_pos"] = np.concatenate((out_data["action.relative_delta.end_pos"], relative_delta_end_pos), axis=-1)
+                out_data["action.relative_delta.end_ori"] = np.concatenate((out_data["action.relative_delta.end_ori"], relative_delta_end_ori), axis=-1)
+                
+        # Set image
+        for cam_idx, cam_name in enumerate(self.camera_names):
+            out_data[f"observation.images.rgb.{cam_name}"] = image_data[cam_idx]
+            if enable_depth:
+                out_data[f"observation.images.depth.{cam_name}"] = depth_data[cam_idx]
+        
+        del out_data["images"]
+        if enable_depth:
+            del out_data["depths"]
+        
+        root.close()
+        
+        return out_data
+
+    def get_replay_length(self):
+        for episode_id in self.episode_ids:
+            dataset_path = os.path.join(self.dataset_dir, f"{episode_id}.h5")
+            with h5py.File(dataset_path, 'r') as root:
+                sample_key = list(root.keys())[0]
+                sample_data = root[sample_key][:]
+                self.dataset_size_dict[episode_id] = len(sample_data)
+
+    def make_replay_start_index(self):
+        prev_start_idx = 0
+        self.start_indices = [0]
+        for episode_id in self.episode_ids[:-1]:
+            cur_start_idx = prev_start_idx + self.dataset_size_dict[episode_id]
+            self.start_indices.append(cur_start_idx)
+            prev_start_idx = cur_start_idx
+        self.start_indices = np.array(self.start_indices)
+        
+
+class SuccessLoadDataset(torch.utils.data.Dataset):
+    def __init__(self, episode_ids, dataset_dir, camera_names, image_size, action_horizon, **kwargs):
+        super(SuccessLoadDataset).__init__()
+        self.episode_ids = np.sort(episode_ids)
+        self.dataset_dir = dataset_dir
+        self.camera_names = camera_names
+        self.image_size = image_size
+        self.action_horizon = action_horizon
+
+        self.image_crop = dict() 
+        if "image_crop" in kwargs.keys():
+            for image_name, crop_area in kwargs["image_crop"].items():
+                self.image_crop[image_name] = lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
+        
+        # self.image_resize = transforms.Resize(image_size) if image_size is not None else None
+        self.image_resize = lambda img: cv2.resize(img, dsize=image_size) if image_size is not None else None
+
+        self.use_augmentation = True
+        self.augmentation = transforms.Compose([
+            transforms.ColorJitter(
+                brightness=0.5,
+                contrast=0.5,
+                saturation=0.5
+            ),
+        ])
+        
+        # Load success/failure
+        self.success_indices = []
+        self.failure_indices = []
+        
+        for episode_id in self.episode_ids:
+            dataset_path = os.path.join(self.dataset_dir, f"{episode_id}.h5")
+            with h5py.File(dataset_path, 'r') as root:
+                is_success = root["is_success"][:]
+                for t, val in enumerate(is_success):
+                    index = (episode_id, t)
+                    if val:
+                        self.success_indices.append(index)
+                    else:
+                        self.failure_indices.append(index)
+        
+        self.all_indices = self.success_indices + self.failure_indices
+                
+    def __len__(self):
+        return len(self.all_indices)
+
+    def __getitem__(self, index_tuple):
+        # Get episode id and episode-wise index
+        episode_id = index_tuple[0]
+        start_ts = index_tuple[1]
+
+        # Main data
+        dataset_path = os.path.join(self.dataset_dir, f"{episode_id}.h5")
+        root = h5py.File(dataset_path, "r")
+        
+        # Extra data
+        task = self.dataset_dir.split("/")[-1]
+        extra_dataset_path = os.path.join("/".join(self.dataset_dir.split("/")[:-2]), "processed_data_extra")
+        self.extra_dataset_dir = os.path.join(extra_dataset_path, task)
+        if os.path.isdir(self.extra_dataset_dir):
+            extra_dataset_path = os.path.join(self.extra_dataset_dir, f"{episode_id}.h5")
+            extra_root = h5py.File(extra_dataset_path, "r")
+        else:
+            extra_root = None
+        
+        out_data = dict()
+
+        # Sample trajectory in the demonstration
+        episode_len = root[list(root.keys())[0]][:].shape[0]
+        end_ts = min(start_ts + self.action_horizon, episode_len)
+        action_len = end_ts - start_ts
+        
+        # Load data
+        image_dict = {}
+        depth_dict = {}
+        for source in [root] + ([extra_root] if extra_root is not None else []):
+            for key, value in source.items():
+                if key.startswith("observation.images.rgb"):
+                    temp_img = value[start_ts]
+                    
+                    # Crop and Resize
+                    if key in self.image_crop.keys():
+                        temp_img = self.image_crop[key](temp_img)
+
+                    if self.image_resize is not None:
+                        temp_img = self.image_resize(temp_img)
+                    
+                    image_dict[key.split('.')[-1]] = temp_img
+                elif key.startswith("observation.images.depth"):
+                    temp_img = value[start_ts]
+
+                    # Crop and Resize
+                    if key in self.image_crop.keys():
+                        temp_img = self.image_crop[key](temp_img)
+                    if self.image_resize is not None:
+                        temp_img = self.image_resize(temp_img)[..., np.newaxis]
+                    
+                    depth_dict[key.split('.')[-1]] = temp_img
+                elif "observation" in key:
+                    value_ = value[start_ts]
+                    if value_.ndim == 2 or value_.ndim == 3:
+                        if key == "observation.end_orientation":
+                            n_robots = value_.shape[0]
+                        value_ = value_.reshape(-1)
+                    elif value_.ndim != 1:
+                        raise ValueError("Wrong Data Dimension")
+                    out_data[key] = torch.from_numpy(value_).to(torch.float32)
+                elif "action" in key:
+                    value_ = value[start_ts:end_ts]
+                    if value_.ndim == 1:
+                        value_ = value_[..., np.newaxis]
+                    elif value_.ndim == 3 or value_.ndim == 4:
+                        value_ = value_.reshape(action_len, -1)
+                    elif value_.ndim != 2:
+                        raise ValueError("Wrong Data Dimension")
+                    padded_value = np.tile(value_[-1, :], (self.action_horizon, 1))
+                    padded_value[:action_len] = value_
+                    is_pad = np.zeros(self.action_horizon)
+                    is_pad[action_len:] = 1
+                    
+                    out_data[key] = torch.from_numpy(padded_value).to(torch.float32)
+                    out_data["is_pad"] = torch.from_numpy(is_pad).to(torch.bool)
+                elif "is_success" == key:
+                    out_data["is_success"] = torch.from_numpy(value[start_ts]).to(torch.bool)
+                
+        
+        # Construct image
+        all_cam_images = [image_dict[cam_name] for cam_name in self.camera_names]
+        all_cam_images = np.stack(all_cam_images, axis=0)  # (n_cam, H, W, C)
+        out_data["images"] = torch.from_numpy(all_cam_images).to(torch.float32)
+        out_data["images"] = torch.einsum('k h w c -> k c h w', out_data["images"])
+
+        # Construct depth
+        enable_depth = len(depth_dict.keys()) > 0
+        if enable_depth:
+            all_depth_images = [depth_dict[cam_name] for cam_name in self.camera_names]
+            all_depth_images = np.stack(all_depth_images, axis=0)  # (n_cam, H, W, 1)
+            out_data["depths"] = torch.from_numpy(all_depth_images).to(torch.float32)
+            out_data["depths"] = torch.einsum('k h w c -> k c h w', out_data["depths"])
+        
+        image_data = out_data["images"]
+        if enable_depth:
+            depth_data = out_data["depths"]
+        
+        # Augment image
+        if self.use_augmentation:
+            image_data = image_data.to(torch.uint8)
+            for i in range(len(self.camera_names)):
+                image_data[i] = self.augmentation(image_data[i])  # apply different augmentation for each camera image
+            image_data = image_data.to(torch.float32)
+            
+        # Normalize image
+        image_data /= 255.
+            
+        # Compute action labels for relative_delta task space control
+        for idx in range(n_robots):
+            current_end_pos_w = out_data["observation.end_position"][3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            current_end_ori_w = out_data["observation.end_orientation"][9 * idx : 9 * (idx + 1)].reshape(3, 3)
+            target_end_pos_w = out_data["action.end_pos"][:, 3 * idx : 3 * (idx + 1)]  # (T, 3 * num_robots)
+            target_end_ori_w = out_data["action.end_ori"][:, 9 * idx : 9 * (idx + 1)].reshape(self.action_horizon, 3, 3)
+            
+            relative_delta_end_pos = \
+                torch.bmm(torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), (target_end_pos_w - current_end_pos_w).unsqueeze(-1)).squeeze(-1)
+            relative_delta_end_ori = \
+                torch.bmm(
+                    torch.transpose(current_end_ori_w, 0, 1).unsqueeze(0).expand(self.action_horizon, -1, -1), 
+                    target_end_ori_w).reshape(self.action_horizon, -1)
+
+            if idx == 0:
+                out_data["action.relative_delta.end_pos"] = relative_delta_end_pos
+                out_data["action.relative_delta.end_ori"] = relative_delta_end_ori
+            else:
+                out_data["action.relative_delta.end_pos"] = np.concatenate((out_data["action.relative_delta.end_pos"], relative_delta_end_pos), axis=-1)
+                out_data["action.relative_delta.end_ori"] = np.concatenate((out_data["action.relative_delta.end_ori"], relative_delta_end_ori), axis=-1)
+        
+        # Set image
+        for cam_idx, cam_name in enumerate(self.camera_names):
+            out_data[f"observation.images.rgb.{cam_name}"] = image_data[cam_idx]
+            if enable_depth:
+                out_data[f"observation.images.depth.{cam_name}"] = depth_data[cam_idx]
+        
+        del out_data["images"]
+        if enable_depth:
+            del out_data["depths"]
+        
+        root.close()
+
+        return out_data
+    
+class BalancedBatchSampler(Sampler):
+    def __init__(self, success_indices, failure_indices, batch_size):
+        assert batch_size % 2 == 0, "Batch size must be even"
+        self.success_indices = success_indices
+        self.failure_indices = failure_indices
+        self.batch_size = batch_size
+        self.half_batch = batch_size // 2
+
+        self.num_batches = min(
+            len(success_indices), len(failure_indices)
+        ) // self.half_batch
+
+    def __iter__(self):
+        success_pool = self.success_indices.copy()
+        failure_pool = self.failure_indices.copy()
+        random.shuffle(success_pool)
+        random.shuffle(failure_pool)
+
+        for i in range(self.num_batches):
+            success_batch = success_pool[i * self.half_batch: (i + 1) * self.half_batch]
+            failure_batch = failure_pool[i * self.half_batch: (i + 1) * self.half_batch]
+            batch = success_batch + failure_batch
+            random.shuffle(batch)
+            yield batch
+
+    def __len__(self):
+        return self.num_batches
+
+
+def get_norm_stats(dataset_dir: str) -> Dict[str, Dict[str, torch.tensor]]:
+    """
+    Compute dataset statistics and use them during training and testing
+    """ 
+    import psutil
+    def get_memory_usage(mode="used"):
+        assert mode in ["used", "total"]
+        memory_info = psutil.virtual_memory()
+        if mode == "used":
+            return memory_info.used / (1024 * 1024)  # Return used memory in MB
+        elif mode == "total":
+            return memory_info.total / (1024 * 1024)  # Return total memory in MB
+    
+    total_memory = get_memory_usage(mode="total")
+
+    total_data = {}
+    for file in os.listdir(dataset_dir):
+        memory_usage = get_memory_usage(mode="used")
+        if memory_usage > total_memory * 0.5:
+            print("[WARNING] Not enough memory to load all data for statistics computation\n\n")
+            break
+        
+        with h5py.File(os.path.join(dataset_dir, file), "r") as root:
+            for key, value in root.items():
+                if key.startswith("observation.images"):
+                    continue
+                
+                value = value[:]
+                assert type(value) is np.ndarray, f"{key}:{type(value)}. Only numpy array is allowed"
+                value_ = torch.from_numpy(value)
+                episode_len = value_.shape[0]
+                
+                if value_.dim() == 1:
+                    value_ = value_.unsqueeze(-1)
+                elif value_.dim() == 3 or value_.dim() == 4:
+                    value_ = value_.reshape(episode_len, -1)
+                elif value_.dim() != 2:
+                    raise ValueError("Wrong Data Dimension")
+                
+                if key in total_data:
+                    total_data[key].append(value_)
+                else:
+                    total_data[key] = [value_]
+        
+    stats = {key:{} for key in total_data}
+    for key, value in total_data.items():
+        concatenated_value = torch.concat(value, dim=0) # (T1+T2+..., n_joints)  or  (T1+T2+..., n_joints * n_robots) or ((T1 + T2 + ...) * n_dim,)
+        stats[key]["mean"] = torch.mean(concatenated_value, dim=0)
+        stats[key]["std"] = torch.clip(torch.std(concatenated_value, dim=0), min=1e-5, max=np.inf)
+        stats[key]["max"] = torch.max(concatenated_value, dim=0).values
+        stats[key]["min"] = torch.min(concatenated_value, dim=0).values
+    return stats
+
+
+def load_data(base_cfg: BaseConfig, 
+              train_config: Dict[str, Any], 
+              camera_names: List[str], 
+              image_size: List[int], 
+              action_horizon: int, 
+              compute_relative_delta_norm: bool = False, 
+              **kwargs) -> Tuple[torch.utils.data.DataLoader, 
+                                 Union[torch.utils.data.DataLoader, None], 
+                                 Dict[str, Dict[str, torch.tensor]]]:
+    
+    print(f'\nData from: {base_cfg.dataset_dir}\n')
+    
+    # Set train indexes
+    num_episodes = len(os.listdir(base_cfg.dataset_dir))
+    shuffled_indices = np.random.permutation(num_episodes)
+    
+    # Compute dataset statistics
+    norm_stats = get_norm_stats(base_cfg.dataset_dir)
+    
+    # Set consistent generator for the dataloader
+    torch_gen = torch.Generator()
+    torch_gen.manual_seed(base_cfg.seed)
+    
+    # Construct dataset and dataloader
+    image_dataset = ImageLoadDataset(
+        episode_ids=shuffled_indices,
+        dataset_dir=base_cfg.dataset_dir,
+        camera_names=camera_names,
+        image_size=image_size,
+        action_horizon=action_horizon,
+        **kwargs
+    )
+    image_dataloader = DataLoader(
+        image_dataset, 
+        batch_size=train_config["batch_size"],
+        shuffle=True, 
+        pin_memory=True, 
+        num_workers=base_cfg.num_workers, 
+        prefetch_factor=1,
+        generator=torch_gen,
+        drop_last=True
+    )
+    
+    if kwargs.get("use_success_detector", False):
+        success_dataset = SuccessLoadDataset(
+            episode_ids=shuffled_indices,
+            dataset_dir=base_cfg.dataset_dir,
+            camera_names=camera_names,
+            image_size=image_size,
+            action_horizon=action_horizon,
+            **kwargs
+        )
+        success_sampler = BalancedBatchSampler(
+            success_indices=success_dataset.success_indices,
+            failure_indices=success_dataset.failure_indices,
+            batch_size=train_config["success_detector_batch_size"]
+        )
+        success_dataloader = DataLoader(
+            success_dataset, 
+            batch_sampler=success_sampler, 
+            num_workers=base_cfg.num_workers)
+    else:
+        success_dataloader = None
+        
+    # Compute stats for relative_delta task space control
+    if compute_relative_delta_norm:
+        data = image_dataset.__getitem__(0)
+        data_keys = ["action.relative_delta.end_pos", "action.relative_delta.end_ori"]
+        
+        # Set running mean and std
+        running_stats: Dict[str, TorchRunningStats] = dict()
+        for data_key in data_keys:
+            running_stats[data_key] = TorchRunningStats(shape=data[data_key].shape)
+        
+        # Compute mean and std
+        for data in image_dataloader:
+            for data_key in data_keys:
+                running_stats[data_key].batch_update(data[data_key])
+        
+        # Save mean and std
+        for data_key in data_keys:
+            norm_stats[data_key] = dict()
+            norm_stats[data_key]["mean"] = running_stats[data_key].mean()
+            norm_stats[data_key]["std"] = torch.clip(
+                running_stats[data_key].standard_deviation(), min=1e-5, max=np.inf)
+            
+    return image_dataloader, success_dataloader, norm_stats
+
+
+def load_dagger_validation_data(base_cfg: BaseConfig, 
+                                train_config: Dict[str, Any], 
+                                camera_names: List[str], 
+                                image_size: List[int], 
+                                action_horizon: int, 
+                                **kwargs):
+    import json
+    
+    assert base_cfg.dagger_mode, "Used for dagger mode only"
+    
+    num_episodes = len(os.listdir(base_cfg.dataset_dir))
+    
+    # Load dagger config
+    collect_progress_file = f"{base_cfg.dataset_dir}/../{base_cfg.task_name}_progress.json"
+    assert os.path.exists(collect_progress_file), "Dagger progress file does not exist"
+    with open(collect_progress_file, "r") as f:
+        collect_progress = json.load(f)
+        
+    data_subset_start_idx = [0]
+    for k, v in collect_progress.items():
+        data_subset_start_idx.append(v)
+    data_subset_end_idx = data_subset_start_idx[1:]
+    data_subset_end_idx.append(num_episodes)
+    
+    # Set consistent generator for the dataloader
+    torch_gen = torch.Generator()
+    torch_gen.manual_seed(base_cfg.seed)
+    
+    subset_dataloaders = []
+    for i in range(len(data_subset_start_idx)):
+        subset = ImageLoadDataset(
+            episode_ids=np.arange(start=data_subset_start_idx[i], stop=data_subset_end_idx[i]),
+            dataset_dir=base_cfg.dataset_dir,
+            camera_names=camera_names,
+            image_size=image_size,
+            action_horizon=action_horizon,
+            **kwargs
+        )
+        subset_dataloader = DataLoader(
+            subset, 
+            batch_size=100,
+            shuffle=False, 
+            pin_memory=True, 
+            num_workers=base_cfg.num_workers, 
+            prefetch_factor=1,
+            generator=torch_gen,
+            drop_last=True
+        )
+        subset_dataloaders.append(subset_dataloader)
+    return subset_dataloaders

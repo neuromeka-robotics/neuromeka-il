@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nrmk_il"
+version = "1.0.0"
+description = "Neuromeka imitation learning framework"
+authors = [
+  { name = "Yunho Kim", email = "yunho.kim@neuromeka.com" },
+  { name = "Quan Nguyen", email = "quan.nguyen@neuromeka.com" },
+  { name = "Joonho Lee", email = "joonho.lee@neuromeka.com" }
+]
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["nrmk_il*"]

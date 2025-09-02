@@ -1,98 +1,57 @@
 # Neuromeka Imitation Learning
 
-This repository contains an implementation for training neural network controllers with imitation learning. The codebase was used to control either a single or dual [Indy7](https://en.neuromeka.com/indy) robots manufactured by Neuromeka. ([Demo video](https://youtu.be/xl4yk2qT7DA?si=70NDDoPU6yNK84tE))
+This repository contains an implementation for training neural network controllers with imitation learning. The codebase was used to control either a single or dual [Indy7](https://en.neuromeka.com/indy) robots manufactured by Neuromeka. ([Demo video](https://youtu.be/xl4yk2qT7DA?si=70NDDoPU6yNK84tE)) The default policy is based on [Action Chunking with Transformers (ACT)](https://arxiv.org/abs/2304.13705).
 
-### Installation
-The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with CUDA 12.1 on NVIDIA RTX 4090.
-```
-conda env create -f environment.yaml -n env_il
-```
+## Repository Structure
 
-### Training configurations
-The codebase supports below configurations.
+-   `train`: Contains code for 
+    -   Preprocessing demonstration data
+    -   Training imitation learning policies
+-   `deploy`: Contains code for 
+    -   Collecting demonstration data via teleoperation
+    -   Deploying trained policies on real robots
+    -   Extra functionalities useful for improving the policy's performance (e.g., [DAGGER](https://arxiv.org/abs/1011.0686), Finite-State-Machine).
 
-(1) Algorithm
-- ACT (i.e., Action Chunking Transformer) [[Paper](https://arxiv.org/abs/2304.13705)]
+## Installation
 
-(2) Robot mode
-- Single robot arm
-- Single robot arm with gripper
-- Dual robot arm
-- Dual robot arm with gripper
+1.  Clone this repository:
+    ```bash
+    git clone https://github.com/neuromeka-robotics/neuromeka-il.git
+    cd neuromeka-il
+    ```
 
-(3) Control mode (i.e., output of neural network)
-- Task space
-- Relative delta task space [[Paper](https://arxiv.org/abs/2402.10329)]
+2.  Create a conda environment using the provided `environment.yaml` or `environment_train.yaml` file. The required conda environment (name: `env_il`) can be created as follows. The implementation was tested with NVIDIA RTX 3060 + CUDA 11.7 and NVIDIA RTX 4090 + CUDA 12.1.
+    ```bash
+    # Option 1: Generate conda environment for both TRAIN and DEPLOY
+    conda env create -f environment.yaml -n env_il
 
-Configurations can be controlled via *yaml* files listed below `config`. Create a new folder and custom configuration files similar to those in `config/example`.
+    # OPTION 2: Generate conda environment only for TRAIN
+    conda env create -f environment_train.yaml -n env_il
+    ```
 
-### Usage
-The collected data should be first located under `data` as follows.
-```
-|- data
-|---TASK_NAME
-|----- 0.h5
-|----- 1.h5
-|---- ...
-```
-Then, follow below **three** steps.
+3. Install `train/nrmk_il` as a Python package. `train/nrmk_il` includes the core algorithmic components of imitation learning. The package will be installed with a symbolic link, so any changes in the repository will be reflected during execution.
+    ```bash
+    conda activate env_il
+    cd train/nrmk_il
+    pip install -e .
+    ```
 
-First, activate conda environment.
-```
-conda activate env_il
-```
-Second, preprocess data. The preprocessed data will be saved under `processed_data`.
-```
-python preprocess.py --task TASK_NAME
-```
-Third, train neural networks.
-```
-python imitate.py --config-path=config/CONFIG_DIRECTORY --config-name=CONFIG_FILE
-```
+## Further instruction
+Check [train/README.md](train/README.md) and [deploy/README.md](deploy/README.md) to learn more.
 
-### Usage examples
-We provide a pipeline that tests the implementation with randomly generated data, helping individuals understand the process and required data format.
+The recommended steps to follow are outlined below:
+1. [Collect data](deploy/README.md#data-collection)
+2. [Train model](train/README.md)
+3. [Evaluate model in real-world](deploy/README.md#deploy-controller-trained-with-imitation-learning)
 
-Before proceeding with the pipeline below, make sure that your SSD has at least 1GB of free memory.
+For a detailed walkthrough, check out the [tutorial slides](/Neuromeka_IL_tutorial.pdf), which explain how to use this repository.
 
-First, create and preprocess synthetic data. Four datasets (*test_single_robot*, *test_single_robot_gripper*, *test_dual_robot*, *test_dual_robot_gripper*) will be generated under `data` and `processed_data`.
-```
-bash make_fake_data.sh
-```
-Then, train neural networks with example configurations.
-```
-# Example 1: Single robot + Task space action
-python imitate.py --config-path=config/example --config-name=single_robot_task.yaml 
+## Credits
+The algorithm code in `train/nrmk_il/src/nrmk_il/policies` are modified version from [LeRobot](https://github.com/huggingface/lerobot), which is licensed under the Apache-2.0 license.
 
-# Example 2: Single robot + Relative delta task space action
-python imitate.py --config-path=config/example --config-name=single_robot_relative_delta.yaml
-
-# Example 3: Single robot with gripper + Task space action
-python imitate.py --config-path=config/example --config-name=single_robot_gripper_task.yaml
-
-# Example 4: Single robot with gripper + Relative delta task space action
-python imitate.py --config-path=config/example --config-name=single_robot_gripper_relative_delta.yaml
-
-# Example 5: Dual robot + Task space action
-python imitate.py --config-path=config/example --config-name=dual_robot_task.yaml
-
-# Example 6: Dual robot + Relative delta task space action
-python imitate.py --config-path=config/example --config-name=dual_robot_relative_delta.yaml
-
-# Example 7: Dual robot with gripper + Task space action
-python imitate.py --config-path=config/example --config-name=dual_robot_gripper_task.yaml
-
-# Example 8: Dual robot with gripper + Relative delta task space action
-python imitate.py --config-path=config/example --config-name=dual_robot_gripper_relative_delta.yaml 
-```
-
-### Training plot examples
-[Wandb](https://wandb.ai/site/) can be enabled in the configuration file to visualize training progress. Below is an example results for single robot arm task.
-
-<img width=600 src='plot/example_result.png'>
-
-### Credits
-The algorithm code is modified version from [LeRobot](https://github.com/huggingface/lerobot), which is licensed under the Apache-2.0 license.
-
-### Authors
+## Authors
 [Neuromeka AI team](https://ai.neuromeka.com/)
+
+## License
+
+This project is licensed under the terms of the license agreement found in `LICENSE`.

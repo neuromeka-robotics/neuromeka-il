@@ -33,7 +33,7 @@ class ImageLoadDataset(torch.utils.data.Dataset):
         self.image_crop = dict() 
         if "image_crop" in kwargs.keys():
             for image_name, crop_area in kwargs["image_crop"].items():
-                self.image_crop[image_name] = lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
+                self.image_crop[image_name] = lambda img, crop=crop_area: img[crop[0][0]:crop[0][1], crop[1][0]:crop[1][1]]
         
         self.image_resize = lambda img: cv2.resize(img, dsize=image_size) if image_size is not None else None
 
@@ -214,7 +214,7 @@ class SuccessLoadDataset(torch.utils.data.Dataset):
         self.image_crop = dict() 
         if "image_crop" in kwargs.keys():
             for image_name, crop_area in kwargs["image_crop"].items():
-                self.image_crop[image_name] = lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
+                self.image_crop[image_name] = lambda img, crop=crop_area: img[crop[0][0]:crop[0][1], crop[1][0]:crop[1][1]]
         
         # self.image_resize = transforms.Resize(image_size) if image_size is not None else None
         self.image_resize = lambda img: cv2.resize(img, dsize=image_size) if image_size is not None else None

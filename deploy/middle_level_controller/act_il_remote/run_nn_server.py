@@ -87,7 +87,7 @@ class RequestHandler(BaseRequestHandler):
             if cfg.get("extra") is not None and cfg["extra"].get("image_crop") is not None:
                 for image_name, crop_area in cfg["extra"]["image_crop"].items():
                     self.image_crop[image_name] = \
-                        lambda img: img[crop_area[0][0]:crop_area[0][1], crop_area[1][0]:crop_area[1][1]]
+                        lambda img, crop=crop_area: img[crop[0][0]:crop[0][1], crop[1][0]:crop[1][1]]
             
             # load policy
             if model_type == "act":

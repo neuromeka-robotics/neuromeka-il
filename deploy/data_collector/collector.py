@@ -17,33 +17,35 @@ from helper.extra_utils import ROBOT_STATE, KeyboardListener
 from helper.controller_utils import Controller
 from perception.realsense import RealsenseCamHandler
 from data_collector.device.base import BaseDevice
+import getch
 
 # communication
 from communication.robot import Robot
 
 # config
 from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
-from data_collector.config import DATA_COLLECTOR_ROBOT_CONFIG, DATA_COLLECTOR_TASK_CONFIG
+from data_collector.config import DataCollectorConfig, CONFIGS as DATA_COLLECTOR_CONFIGS
 
 
 class DataCollectionScheduler(Controller):
-    ROBOT_CONFIG = DATA_COLLECTOR_ROBOT_CONFIG
-    ROBOT_IDS = DATA_COLLECTOR_ROBOT_CONFIG.robot_ids
-    TASK_CONFIG = DATA_COLLECTOR_TASK_CONFIG
-    TASK_NAME = DATA_COLLECTOR_TASK_CONFIG.name
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
+        config: DataCollectorConfig = DATA_COLLECTOR_CONFIGS[kwargs["config_name"]]
+        self.robot_config = config.robot_config
+        self.robot_ids = self.robot_config.robot_ids
+        self.task_config = config.task_config
+        self.task_name = self.task_config.name
         super(DataCollectionScheduler, self).__init__(robot=robot, **kwargs)
         
         # set camera
         self.camera: Dict[str, RealsenseCamHandler] = kwargs.get("camera", dict())
-        for cam_name in self.TASK_CONFIG.camera_config.cam_names:
+        for cam_name in self.task_config.camera_config.cam_names:
             if cam_name in self.camera.keys():
                 if not self.camera[cam_name]._thread_running:
                     self.camera[cam_name].start()
             else:
-                cam_config = self.TASK_CONFIG.camera_config.cam_params[cam_name]
+                cam_config = self.task_config.camera_config.cam_params[cam_name]
                 
                 self.camera[cam_name] = RealsenseCamHandler(
                     serial_number=cam_config["serial"], 
@@ -55,8 +57,8 @@ class DataCollectionScheduler(Controller):
         
         # set data collector
         self.data_collector = TeleopDataCollector(
-            robot_config=self.ROBOT_CONFIG,
-            task_config=self.TASK_CONFIG,
+            robot_config=self.robot_config,
+            task_config=self.task_config,
             dagger_mode=kwargs.get("dagger_mode", False)
         )
         self.control_mode = self.data_collector.get_control_mode()
@@ -79,19 +81,19 @@ class DataCollectionScheduler(Controller):
             self._collection_thread.join()
             
             # save trajectory if it's OK
-            command_listener = KeyboardListener(key_targets=["s", "e"])
+            #command_listener = KeyboardListener(key_targets=["s", "e"])
             print("Click 's' to save / Click 'e' to not save")
             while True:
-                command = command_listener.get_key_states()
-                if command["updated"]:
-                    if command["value"]["s"]:
-                        print(f"Trajectory {self.data_collector.traj_num} saved.")
-                        self.data_collector.save_data_buffer()
-                        self.data_collector.visualize_last_data()
-                        break
-                    elif command["value"]["e"]:
-                        print("Not saved")
-                        break
+                #command = command_listener.get_key_states()
+                char = getch.getch()
+                if char == "s":
+                    print(f"Trajectory {self.data_collector.traj_num} saved.")
+                    self.data_collector.save_data_buffer()
+                    self.data_collector.visualize_last_data()
+                    break
+                elif char == "e":
+                    print("Not saved")
+                    break
                         
             self.data_collector.init_data_buffer()
                 
@@ -104,7 +106,7 @@ class DataCollectionScheduler(Controller):
         # initialize state variable
         prev_button = False
         is_recording = False
-        value = {robot_id: self.robot[robot_id].get_state()["p"] for robot_id in self.ROBOT_IDS}
+        value = {robot_id: self.robot[robot_id].get_state()["p"] for robot_id in self.robot_ids}
 
         # start
         while self._collection_triggered:
@@ -113,7 +115,7 @@ class DataCollectionScheduler(Controller):
             buffer_data = dict()
                 
             # get proprioception
-            for robot_id in self.ROBOT_IDS:
+            for robot_id in self.robot_ids:
                 control_dat = self.robot[robot_id].get_state()
                 gripper_state = self.robot[robot_id].get_gripper_state()
                 
@@ -125,17 +127,17 @@ class DataCollectionScheduler(Controller):
                 buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
             
             # get exteroception
-            for cam_name in self.TASK_CONFIG.camera_config.cam_names:
+            for cam_name in self.task_config.camera_config.cam_names:
                 cam_output = self.camera[cam_name].get_all()
                 
                 buffer_data[f"images.rgb.{cam_name}"] = cam_output["rgb"]
-                if self.TASK_CONFIG.camera_config.cam_params[cam_name].get("enable_depth", False):
+                if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
                     buffer_data[f"images.depth.{cam_name}"] = cam_output["depth"]
                 buffer_data[f"images.intrinsics.{cam_name}"] = cam_output["intrinsics"]
                     
             # get device data
             device_data = self.data_collector.get_device_input(
-                **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.ROBOT_IDS})
+                **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
             
             # device connection lost
             if not device_data["final_valid"]:
@@ -152,24 +154,24 @@ class DataCollectionScheduler(Controller):
                 print("Recording started")
                 is_recording = True
 
-                for robot_id in self.ROBOT_IDS:
+                for robot_id in self.robot_ids:
                     self.data_collector.device[robot_id].reset()
                 
                 device_data = self.data_collector.get_device_input(
-                    **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.ROBOT_IDS})
+                    **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
                 
             prev_button = device_data["final_button"]
                 
             if is_recording:
                 # get robot control
-                value = {robot_id: self.TASK_CONFIG.extra_config.control_post_process_fn(device_data[robot_id]["control"]) \
-                    for robot_id in self.ROBOT_IDS}
+                value = {robot_id: self.task_config.extra_config.control_post_process_fn(device_data[robot_id]["control"]) \
+                    for robot_id in self.robot_ids}
                 
                 # get gripper control (BINARY)
-                gripper_command = {robot_id: (1. - np.round(device_data[robot_id]["trigger"])) for robot_id in self.ROBOT_IDS}
+                gripper_command = {robot_id: (1. - np.round(device_data[robot_id]["trigger"])) for robot_id in self.robot_ids}
                 
                 # update buffer    
-                for robot_id in self.ROBOT_IDS:                    
+                for robot_id in self.robot_ids:                    
                     buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
                     buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
                     self.data_collector.update_data_buffer(**buffer_data)
@@ -178,8 +180,8 @@ class DataCollectionScheduler(Controller):
                 self.robot_cluster.tele_move(
                     action=value,
                     mode=self.control_mode,
-                    vel_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
-                    acc_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+                    vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
+                    acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
                 )
                 
                 # execute control to gripper
@@ -187,14 +189,14 @@ class DataCollectionScheduler(Controller):
                 
                 # sync control frequency
                 control_end = time.time()
-                wait_time = self.ROBOT_CONFIG.control_dt - (control_end - control_start)
+                wait_time = self.robot_config.control_dt - (control_end - control_start)
                 if wait_time > 0.:
                     time.sleep(wait_time)
                     
         # soft stop
         self.exec_soft_stop(
             last_action=value,
-            control_period=self.ROBOT_CONFIG.control_dt,
+            control_period=self.robot_config.control_dt,
             mode=self.control_mode)
         
         # post execution
@@ -207,25 +209,31 @@ class TeleopDataCollector:
                  task_config: TASK_CONFIG, 
                  dagger_mode=False, 
                  device=None):
-        self.ROBOT_CONFIG = robot_config
-        self.ROBOT_IDS = robot_config.robot_ids
-        self.TASK_CONFIG = task_config
-        self.TASK_NAME = task_config.name
+        self.robot_config = robot_config
+        self.robot_ids = robot_config.robot_ids
+        self.task_config = task_config
+        self.task_name = task_config.name
         
         self.device: Dict[int, BaseDevice] = dict()
         if device is None:
-            for robot_id in self.ROBOT_IDS:
-                if self.TASK_CONFIG.data_config.device_type == "vive":
+            for robot_id in self.robot_ids:
+                if self.task_config.data_config.device_type == "vive":
                     from data_collector.device.vive import Vive
                     self.device[robot_id] = Vive()
+                if self.task_config.data_config.device_type == "spacemouse":
+                    from data_collector.device.spacemouse import SpaceMouse
+                    self.device[robot_id] = SpaceMouse(
+                        device_params=self.task_config.data_config.device_params,
+                        control_dt=self.robot_config.control_dt
+                    )
                 else:
                     raise ValueError
         else:
             self.device = device
         
         # check data colleciton progress
-        self.DATA_DIR = os.path.join(self.TASK_CONFIG.data_config.data_dir, self.TASK_NAME)
-        self.DATA_VIZ_DIR = os.path.join(self.TASK_CONFIG.data_config.data_viz_dir, self.TASK_NAME)
+        self.DATA_DIR = os.path.join(self.task_config.data_config.data_dir, self.task_name)
+        self.DATA_VIZ_DIR = os.path.join(self.task_config.data_config.data_viz_dir, self.task_name)
         
         if dagger_mode:
             assert os.path.isdir(self.DATA_DIR), "Data directory does not exist"
@@ -239,12 +247,12 @@ class TeleopDataCollector:
             traj_nums = [int(f.split(".")[0]) for f in os.listdir(self.DATA_DIR) if f.endswith('.h5')]
             self.traj_num = max(traj_nums) + 1
         print("==========================")
-        print(f"[Task: {self.TASK_NAME}] Continue data saving from {self.traj_num}")
+        print(f"[Task: {self.task_name}] Continue data saving from {self.traj_num}")
         print("==========================")
         
         # save data collection progress (DAGGER)
         if dagger_mode:
-            collect_progress_file = os.path.join(self.TASK_CONFIG.data_config.data_dir, f"{self.TASK_NAME}_progress.json")
+            collect_progress_file = os.path.join(self.task_config.data_config.data_dir, f"{self.task_name}_progress.json")
             if os.path.exists(collect_progress_file):
                 with open(collect_progress_file, "r") as f:
                     collect_progress = json.load(f)
@@ -271,7 +279,7 @@ class TeleopDataCollector:
         self.init_data_buffer()
         
     def __del__(self):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             self.device[robot_id].exit()
             
     def get_device_input(self, **kwargs):
@@ -279,7 +287,7 @@ class TeleopDataCollector:
         output["final_button"] = False
         output["final_valid"] = True
         
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             output[robot_id] = self.device[robot_id].get_input(robot_pose=kwargs[f"p_{robot_id}"])
             output["final_button"] = output["final_button"] or output[robot_id]["button"]
             output["final_valid"] = output["final_valid"] and output[robot_id]["valid"]
@@ -288,7 +296,7 @@ class TeleopDataCollector:
     def get_control_mode(self):
         from helper.extra_utils import ROBOT_CONTROL_MODE
         
-        control_mode = self.device[self.ROBOT_IDS[0]].CONTROL_MODE
+        control_mode = self.device[self.robot_ids[0]].CONTROL_MODE
         if control_mode == ROBOT_CONTROL_MODE.TELE_JOINT_ABSOLUTE:
             return "joint_abs"
         else:
@@ -305,12 +313,12 @@ class TeleopDataCollector:
         # Reset data
         self.data_types = []
         for type in ["q", "qdot", "p", "pdot", "gripper_position", "grasp_state", "tele_abs_control", "gripper_command"]:
-            for robot_id in self.ROBOT_IDS:
+            for robot_id in self.robot_ids:
                 self.data_types.append(f"{type}_{robot_id}")
                 
-        for cam_name in self.TASK_CONFIG.camera_config.cam_names:
+        for cam_name in self.task_config.camera_config.cam_names:
             self.data_types.append(f"images.rgb.{cam_name}")
-            if self.TASK_CONFIG.camera_config.cam_params[cam_name].get("enable_depth", False):
+            if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
                 self.data_types.append(f"images.depth.{cam_name}")
             self.data_types.append(f"images.intrinsics.{cam_name}")
         
@@ -321,7 +329,7 @@ class TeleopDataCollector:
         self.traj_len = 0
         
         # Reset device
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             self.device[robot_id].reset()
         
     def update_data_buffer(self, **kwargs):
@@ -362,7 +370,7 @@ class TeleopDataCollector:
     def visualize_last_data(self):
         # SET DATA ID TO VISUALIZE
         VISUALIZE_DATA_ID = self.traj_num - 1
-        FREQUENCY = int(1 / self.ROBOT_CONFIG.control_dt)
+        FREQUENCY = int(1 / self.robot_config.control_dt)
         if not os.path.isdir(self.DATA_VIZ_DIR):
             os.makedirs(self.DATA_VIZ_DIR)
 
@@ -390,7 +398,7 @@ class TeleopDataCollector:
                 video_writer.release()
 
         # Check proprioception
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             joint_pos_traj = collected_traj[f"q_{robot_id}"]
             joint_vel_traj = collected_traj[f"qdot_{robot_id}"]
             end_pose_traj = collected_traj[f"p_{robot_id}"]

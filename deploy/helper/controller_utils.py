@@ -15,24 +15,24 @@ from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG, BASE_ROBOT_CONFIG, BA
 
 
 class Controller:
-    ROBOT_CONFIG = BASE_ROBOT_CONFIG
-    ROBOT_IDS = BASE_ROBOT_CONFIG.robot_ids
-    TASK_CONFIG = BASE_TASK_CONFIG
-    TASK_NAME = BASE_TASK_CONFIG.name
+    robot_config = BASE_ROBOT_CONFIG
+    robot_ids = BASE_ROBOT_CONFIG.robot_ids
+    task_config = BASE_TASK_CONFIG
+    task_name = BASE_TASK_CONFIG.name
         
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
         self.robot: Dict[int, Robot] = dict()
         if robot is not None:
             self.robot = robot
-            for robot_id in self.ROBOT_IDS:
+            for robot_id in self.robot_ids:
                 assert robot_id in self.robot.keys(), f"Robot id {robot_id} does not exist"
                 assert isinstance(self.robot[robot_id], Robot), f"Wrong robot instance for id {robot_id}"
         else:
-            for robot_id in self.ROBOT_IDS:
+            for robot_id in self.robot_ids:
                 self.robot[robot_id] = Robot(
-                    robot_ip=self.ROBOT_CONFIG.robot_params[robot_id]["ip"], 
-                    gripper_config=self.ROBOT_CONFIG.robot_params[robot_id].get("gripper", None))
+                    robot_ip=self.robot_config.robot_params[robot_id]["ip"], 
+                    gripper_config=self.robot_config.robot_params[robot_id].get("gripper", None))
                 
         self.robot_cluster = RobotCluster(robots=self.robot)
         self.exec_set_idle()
@@ -41,48 +41,48 @@ class Controller:
         #############################################################
         # Define process to run for home pos execution in config.py #
         #############################################################
-        self.TASK_CONFIG.extra_config.home_movement_fn(self, wait)
+        self.task_config.extra_config.home_movement_fn(self, wait)
         
     def exec_start_movement(self):
         #######################################################################
         # Define process to run BEFORE main controller execution in config.py #
         #######################################################################
-        self.TASK_CONFIG.extra_config.start_movement_fn(self)
+        self.task_config.extra_config.start_movement_fn(self)
         
     def exec_finish_movement(self):
         ######################################################################
         # Define process to run AFTER main controller execution in config.py #
         ######################################################################
-        self.TASK_CONFIG.extra_config.finish_movement_fn(self)
+        self.task_config.extra_config.finish_movement_fn(self)
 
     def exec_home_pos(self, wait=False):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             self.set_idle(robot_id)
             time.sleep(0.1)
         
         target_pos_dict = dict()
-        for robot_id in self.ROBOT_IDS:
-            if self.ROBOT_CONFIG.robot_params[robot_id]["home_pos"] is not None:
-                target_pos_dict[robot_id] = self.ROBOT_CONFIG.robot_params[robot_id]["home_pos"]
+        for robot_id in self.robot_ids:
+            if self.robot_config.robot_params[robot_id]["home_pos"] is not None:
+                target_pos_dict[robot_id] = self.robot_config.robot_params[robot_id]["home_pos"]
 
         self.robot_cluster.move(
             target_pos=target_pos_dict,
             mode="joint_abs",
             wait=wait,
-            vel_ratio={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["move_vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
-            acc_ratio={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["move_acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+            vel_ratio={robot_id: self.robot_config.robot_params[robot_id]["control"]["move_vel_scale"] for robot_id in self.robot_config.robot_ids},
+            acc_ratio={robot_id: self.robot_config.robot_params[robot_id]["control"]["move_acc_scale"] for robot_id in self.robot_config.robot_ids},
         )
 
     def exec_set_teleop(self):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             self.set_teleop(robot_id)
 
     def exec_set_idle(self):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             self.set_idle(robot_id)
 
     def exec_direct_teaching(self, enable: bool):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if enable:
                 if robot_state != ROBOT_STATE.DIRECT_TEACHING:
@@ -101,7 +101,7 @@ class Controller:
                     self.robot[robot_id].set_direct_teaching(enable=False)
 
     def exec_emergency_stop(self, enable: bool):
-        for robot_id in self.ROBOT_IDS:
+        for robot_id in self.robot_ids:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if enable:
                 if robot_state != ROBOT_STATE.STOP:
@@ -128,8 +128,8 @@ class Controller:
             self.robot_cluster.tele_move(
                 action=last_action,
                 mode=mode,
-                vel_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
-                acc_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+                vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
+                acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
             )
 
             soft_stop_control_end = time.time()
@@ -139,7 +139,7 @@ class Controller:
 
     def set_teleop(self, robot_id: int, mode: str = "task_abs"):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
-        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
+        assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
 
         time_limit = 10.  # sec
         start_time = time.time()
@@ -154,7 +154,7 @@ class Controller:
                 time.sleep(0.2)
 
     def set_no_teleop(self, robot_id: int):
-        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
+        assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
 
         time_limit = 10.  # sec
         start_time = time.time()
@@ -168,7 +168,7 @@ class Controller:
                 time.sleep(0.2)
 
     def set_recovery(self, robot_id: int):
-        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
+        assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
 
         while True:
             op_state = self.robot[robot_id].get_state()["op_state"]
@@ -179,7 +179,7 @@ class Controller:
                 break
     
     def set_idle(self, robot_id: int):
-        assert robot_id in self.ROBOT_IDS, f"Unavailable robot ID {robot_id}"
+        assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
         
         robot_state = self.robot[robot_id].get_state()["op_state"]
         if robot_state == ROBOT_STATE.TELE_OP:
@@ -201,7 +201,7 @@ class Base_NN_controller(Controller):
         self.camera = {}
         
         # set empty nn policy
-        self.nn_policy: Union[Empty_NN_policy] = Empty_NN_policy(robot_config=self.ROBOT_CONFIG, task_config=self.TASK_CONFIG)
+        self.nn_policy: Union[Empty_NN_policy] = Empty_NN_policy(robot_config=self.robot_config, task_config=self.task_config)
         
     def load_policy(self):
         raise NotImplementedError
@@ -216,14 +216,14 @@ class Base_NN_controller(Controller):
         #######################################################################
         # Define process to run BEFORE main controller execution in config.py #
         #######################################################################
-        self.TASK_CONFIG.extra_config.start_movement_fn(self)
+        self.task_config.extra_config.start_movement_fn(self)
         return NN_CONTROL_STATE.TASK_IN_PROGRESS
         
     def exec_finish_movement(self):
         ######################################################################
         # Define process to run AFTER main controller execution in config.py #
         ######################################################################
-        self.TASK_CONFIG.extra_config.finish_movement_fn(self)
+        self.task_config.extra_config.finish_movement_fn(self)
         if self.control_state == NN_CONTROL_STATE.TASK_FINISH:
             return NN_CONTROL_STATE.TASK_SUCCESS
         else:

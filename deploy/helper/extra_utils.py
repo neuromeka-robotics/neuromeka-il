@@ -92,21 +92,21 @@ def default_home_movement(self, wait: bool, **kwargs):
     self.exec_home_pos(wait)
     
 def default_start_movement(self, **kwargs):
-    for robot_id in self.ROBOT_IDS:
+    for robot_id in self.robot_ids:
         self.set_teleop(robot_id, mode=kwargs.get("control_mode", "task_abs"))
 
 def default_finish_movement(self, **kwargs):
-    for robot_id in self.ROBOT_IDS:
+    for robot_id in self.robot_ids:
         self.set_idle(robot_id)
         
 def home_movement_w_open_gripper(self, wait: bool, **kwargs):
     self.exec_home_pos(wait)
 
     # open gripper if enabled
-    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.ROBOT_IDS})
+    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 1. for robot_id in self.robot_ids})
     
 def home_movement_w_close_gripper(self, wait: bool, **kwargs):
     self.exec_home_pos(wait)
 
     # open gripper if enabled
-    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 0. for robot_id in self.ROBOT_IDS})
+    self.robot_cluster.move_gripper(mode="no_thread", value={robot_id: 0. for robot_id in self.robot_ids})

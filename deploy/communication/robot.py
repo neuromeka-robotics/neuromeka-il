@@ -159,6 +159,9 @@ class Robot:
 
     def get_force_control_gain(self):
         return self.robot_client.get_force_control_gain()
+
+    def set_ft_zero(self):
+        return self.robot_client.get_ft_zero()
         
     def move_gripper(self, mode: str, value: float):
         if self.gripper_client is None:
@@ -266,4 +269,8 @@ class RobotCluster:
         for robot_id in robot_ids:
             state[robot_id] = self.robots[robot_id].get_force_control_gain()
         return state
+
+    def set_ft_zero(self, robot_ids: List[int]):
+        for robot_id in robot_ids:
+            self.robots[robot_id].set_ft_zero()
 

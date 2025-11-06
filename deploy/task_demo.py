@@ -46,7 +46,7 @@ if __name__ == "__main__":
     nn_controller.load_policy()
     
     # Check DAGGER and set data_collector if necessary
-    if nn_controller.TASK_CONFIG.data_config is not None:
+    if nn_controller.task_config.data_config is not None:
         ####################
         ## DAGGER enabled ##
         ####################
@@ -58,8 +58,8 @@ if __name__ == "__main__":
         
         # Overwrite robot and task configurations for data collector
         module = importlib.import_module(f"middle_level_controller.{demo_task}.config")
-        DataCollectionScheduler.ROBOT_CONFIG = module.CUSTOM_ROBOT_CONFIG
-        DataCollectionScheduler.TASK_CONFIG = module.CUSTOM_TASK_CONFIG
+        DataCollectionScheduler.robot_config = module.CUSTOM_ROBOT_CONFIG
+        DataCollectionScheduler.task_config = module.CUSTOM_TASK_CONFIG
         
         data_collection_scheduler: Controller = DataCollectionScheduler(
             robot=nn_controller.robot,

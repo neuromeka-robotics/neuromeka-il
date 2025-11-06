@@ -31,10 +31,10 @@ class DataCollectionScheduler(Controller):
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
-        config: DataCollectorConfig = DATA_COLLECTOR_CONFIGS[kwargs["config_name"]]
-        self.robot_config = config.robot_config
+        self.config: DataCollectorConfig = DATA_COLLECTOR_CONFIGS[kwargs["config_name"]]
+        self.robot_config = self.config.robot_config
         self.robot_ids = self.robot_config.robot_ids
-        self.task_config = config.task_config
+        self.task_config = self.config.task_config
         self.task_name = self.task_config.name
         super(DataCollectionScheduler, self).__init__(robot=robot, **kwargs)
         
@@ -59,6 +59,7 @@ class DataCollectionScheduler(Controller):
         self.data_collector = TeleopDataCollector(
             robot_config=self.robot_config,
             task_config=self.task_config,
+            data_collector_config=self.config,
             dagger_mode=kwargs.get("dagger_mode", False)
         )
         self.control_mode = self.data_collector.get_control_mode()
@@ -116,24 +117,39 @@ class DataCollectionScheduler(Controller):
                 
             # get proprioception
             for robot_id in self.robot_ids:
-                control_dat = self.robot[robot_id].get_state()
-                gripper_state = self.robot[robot_id].get_gripper_state()
-                
-                buffer_data[f"q_{robot_id}"] = control_dat["q"]
-                buffer_data[f"qdot_{robot_id}"] = control_dat["qdot"]
-                buffer_data[f"p_{robot_id}"] = control_dat["p"]
-                buffer_data[f"pdot_{robot_id}"] = control_dat["pdot"]
-                buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
-                buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
+                if "proprio" in self.config.data_to_collect:
+                    control_dat = self.robot[robot_id].get_state()
+                    for k in self.config.data_to_collect["proprio"]:
+                        buffer_data[f"{k}_{robot_id}"] = control_dat[k]
+                if "gripper" in self.config.data_to_collect:
+                    gripper_state = self.robot[robot_id].get_gripper_state()
+                    if "gripper_position" in self.config.data_to_collect["proprio"]:
+                        buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
+                    if "grasp_state" in self.config.data_to_collect["proprio"]:
+                        buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
+                if "other" in self.config.data_to_collect:
+                    if "ft" in self.config.data_to_collect["other"]:
+                        ft_data = self.robot[robot_id].get_transformed_ft_sensor_data()
+                        ft_data = [ft_data[k] for k in self.config.data_to_collect["other"]["ft"]]
+                        if len(ft_data) > 0:
+                            ft_data = np.array(ft_data)
+                            buffer_data[f"ft_{robot_id}"] = ft_data
+                    if "force_gain" in self.config.data_to_collect["other"]:
+                        force_gain = self.robot[robot_id].get_force_control_gain()
+                        collected_force_gain = []
+                        for k in self.config.data_to_collect["other"]["force_gain"]:
+                            collected_force_gain.extend(force_gain[k])
+                            #force_gain = [(force_gain[k] for k in self.config.data_to_collect["other"]["force_gain"]]
+                        if len(force_gain) > 0:
+                            collected_force_gain = np.array(collected_force_gain)
+                            buffer_data[f"force_gain_{robot_id}"] = collected_force_gain
             
             # get exteroception
-            for cam_name in self.task_config.camera_config.cam_names:
-                cam_output = self.camera[cam_name].get_all()
-                
-                buffer_data[f"images.rgb.{cam_name}"] = cam_output["rgb"]
-                if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
-                    buffer_data[f"images.depth.{cam_name}"] = cam_output["depth"]
-                buffer_data[f"images.intrinsics.{cam_name}"] = cam_output["intrinsics"]
+            if "camera" in self.config.data_to_collect:
+                for cam_name in self.config.data_to_collect["camera"]:
+                    cam_output = self.camera[cam_name].get_all()
+                    for k in self.config.data_to_collect["camera"][cam_name]:
+                        buffer_data[f"images.{k}.{cam_name}"] = cam_output[k]
                     
             # get device data
             device_data = self.data_collector.get_device_input(
@@ -172,8 +188,10 @@ class DataCollectionScheduler(Controller):
                 
                 # update buffer    
                 for robot_id in self.robot_ids:                    
-                    buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
-                    buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
+                    if "tele_abs_control" in self.config.data_to_collect["control"]:
+                        buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
+                    if "gripper_command" in self.config.data_to_collect["control"]:
+                        buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
                     self.data_collector.update_data_buffer(**buffer_data)
 
                 # execute control to robot
@@ -207,12 +225,14 @@ class TeleopDataCollector:
     def __init__(self, 
                  robot_config: ROBOT_CONFIG, 
                  task_config: TASK_CONFIG, 
+                 data_collector_config: DataCollectorConfig,
                  dagger_mode=False, 
                  device=None):
         self.robot_config = robot_config
         self.robot_ids = robot_config.robot_ids
         self.task_config = task_config
         self.task_name = task_config.name
+        self.data_collector_config = data_collector_config
         
         self.device: Dict[int, BaseDevice] = dict()
         if device is None:
@@ -312,15 +332,24 @@ class TeleopDataCollector:
         """
         # Reset data
         self.data_types = []
-        for type in ["q", "qdot", "p", "pdot", "gripper_position", "grasp_state", "tele_abs_control", "gripper_command"]:
+        data_to_collect = []
+        for k in self.data_collector_config.data_to_collect.keys():
+            if k == "camera":
+                #data_to_collect.extend(self.config.data_to_collect[k])
+                continue
+            else:
+                data_to_collect.extend(self.data_collector_config.data_to_collect[k])
+        for type in data_to_collect:
             for robot_id in self.robot_ids:
                 self.data_types.append(f"{type}_{robot_id}")
                 
-        for cam_name in self.task_config.camera_config.cam_names:
-            self.data_types.append(f"images.rgb.{cam_name}")
-            if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
-                self.data_types.append(f"images.depth.{cam_name}")
-            self.data_types.append(f"images.intrinsics.{cam_name}")
+        for cam_name in self.data_collector_config.data_to_collect["camera"]:
+            for data in self.data_collector_config.data_to_collect["camera"][cam_name]:
+                self.data_types.append(f"images.{data}.{cam_name}")
+            #self.data_types.append(f"images.rgb.{cam_name}")
+            #if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
+            #    self.data_types.append(f"images.depth.{cam_name}")
+            #self.data_types.append(f"images.intrinsics.{cam_name}")
         
         self.traj = dict()
         for data_type in self.data_types:
@@ -399,70 +428,116 @@ class TeleopDataCollector:
 
         # Check proprioception
         for robot_id in self.robot_ids:
-            joint_pos_traj = collected_traj[f"q_{robot_id}"]
-            joint_vel_traj = collected_traj[f"qdot_{robot_id}"]
-            end_pose_traj = collected_traj[f"p_{robot_id}"]
-            end_vel_traj = collected_traj[f"pdot_{robot_id}"]
-            control_traj = collected_traj[f"tele_abs_control_{robot_id}"]
-            gripper_position_traj = collected_traj[f"gripper_position_{robot_id}"]
-            grasp_state_traj = collected_traj[f"grasp_state_{robot_id}"]
-            gripper_command_traj = collected_traj[f"gripper_command_{robot_id}"]
+            if "proprio" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["proprio"]:
+                if "q" in self.data_collector_config.data_to_collect["proprio"]:
+                    joint_pos_traj = collected_traj[f"q_{robot_id}"]
+                    n_steps = joint_pos_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, joint_pos_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Joint position")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_pos_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            n_steps = joint_pos_traj.shape[0]
-            time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                if "qdot" in self.data_collector_config.data_to_collect["proprio"]:
+                    joint_vel_traj = collected_traj[f"qdot_{robot_id}"]
+                    n_steps = joint_vel_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, joint_vel_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Joint velocity")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_vel_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, joint_pos_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Joint position")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_pos_{robot_id}.png")
-            plt.clf()
-            plt.close()
+                if "p" in self.data_collector_config.data_to_collect["proprio"]:
+                    end_pose_traj = collected_traj[f"p_{robot_id}"]
+                    n_steps = end_pose_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, end_pose_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("End-effector position")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_pos_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, joint_vel_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Joint velocity")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_vel_{robot_id}.png")
-            plt.clf()
-            plt.close()
+                if "pdot" in self.data_collector_config.data_to_collect["proprio"]:
+                    end_vel_traj = collected_traj[f"pdot_{robot_id}"]
+                    n_steps = end_vel_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, end_vel_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("End-effector velocity")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_vel_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
+            
+            if "control" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["control"]:
+                if "tele_abs_control" in self.data_collector_config.data_to_collect["control"]:
+                    control_traj = collected_traj[f"tele_abs_control_{robot_id}"]
+                    n_steps = control_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, control_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Control")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_control_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, end_pose_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("End-effector position")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_pos_{robot_id}.png")
-            plt.clf()
-            plt.close()
+                if "gripper_command" in self.data_collector_config.data_to_collect["control"]:
+                    gripper_command_traj = collected_traj[f"gripper_command_{robot_id}"]
+                    n_steps = gripper_command_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, gripper_command_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Gripper command")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_command_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, end_vel_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("End-effector velocity")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_vel_{robot_id}.png")
-            plt.clf()
-            plt.close()
+            if "gripper" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["gripper"]:
+                if "gripper_position" in self.data_collector_config.data_to_collect["gripper"]:
+                    gripper_position_traj = collected_traj[f"gripper_position_{robot_id}"]
+                    n_steps = gripper_position_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, gripper_position_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Gripper position")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_position_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, control_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Control")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_control_{robot_id}.png")
-            plt.clf()
-            plt.close()
+                if "grasp_state" in self.data_collector_config.data_to_collect["gripper"]:
+                    grasp_state_traj = collected_traj[f"grasp_state_{robot_id}"]
+                    n_steps = grasp_state_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, grasp_state_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Grasp state")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_grasp_state_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, gripper_command_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Gripper command")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_command_{robot_id}.png")
-            plt.clf()
-            plt.close()
+            if "other" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["other"]:
+                if "ft" in self.data_collector_config.data_to_collect["other"]:
+                    ft_traj = collected_traj[f"ft_{robot_id}"]
+                    n_steps = ft_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, ft_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("FT")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_ft_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
 
-            plt.plot(time_traj, gripper_position_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Gripper position")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_position_{robot_id}.png")
-            plt.clf()
-            plt.close()
-
-            plt.plot(time_traj, grasp_state_traj)
-            plt.xlabel("Time [s]")
-            plt.ylabel("Grasp state")
-            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_grasp_state_{robot_id}.png")
-            plt.clf()
-            plt.close()
+                if "force_gain" in self.data_collector_config.data_to_collect["other"]:
+                    force_gain_traj = collected_traj[f"force_gain_{robot_id}"]
+                    n_steps = force_gain_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, force_gain_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel("Force gain")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_gain_{robot_id}.png")
+                    plt.clf()
+                    plt.close()

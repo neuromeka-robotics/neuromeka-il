@@ -8,6 +8,7 @@ from helper.extra_utils import home_movement_w_open_gripper
 class DataCollectorConfig:
     robot_config: ROBOT_CONFIG
     task_config: TASK_CONFIG
+    data_to_collect: List[str]
 
 CONFIGS = {
     "default": DataCollectorConfig(
@@ -74,6 +75,14 @@ CONFIGS = {
                 home_movement_fn = home_movement_w_open_gripper,
                 #control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 47.355045}, "y": {"min": -624.91986, "max": -544.72253}, "x": {"min": 243.68747, "max": 459.47855}})
             )
-        )
+        ),
+        data_to_collect = {
+            "proprio": ["q", "qdot", "p", "pdot"],
+            "gripper": ["gripper_position", "grasp_state"],
+            "camera": {
+                "wrist": ["rgb", "intrinsics", "depth"],
+            },
+            "control": ["tele_abs_control", "gripper_command"]
+        },
     ),
 }

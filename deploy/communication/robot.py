@@ -150,6 +150,15 @@ class Robot:
             "gripper_pos": gripper_pos,
             "grasp_state": grasp_state
         }
+
+    def get_transformed_ft_sensor_data(self):
+        return self.robot_client.get_transformed_ft_sensor_data()
+
+    def get_ft_sensor_data(self):
+        return self.robot_client.get_ft_sensor_data()
+
+    def get_force_control_gain(self):
+        return self.robot_client.get_force_control_gain()
         
     def move_gripper(self, mode: str, value: float):
         if self.gripper_client is None:
@@ -239,3 +248,22 @@ class RobotCluster:
     def move_gripper(self, mode: str, value: Dict[int, float]):
         for robot_id, pos in value.items():
             self.robots[robot_id].move_gripper(mode=mode, value=pos)
+
+    def get_transformed_ft_sensor_data(self, robot_ids: List[int]):
+        state = dict()
+        for robot_id in robot_ids:
+            state[robot_id] = self.robots[robot_id].get_transformed_ft_sensor_data()
+        return state
+
+    def get_ft_sensor_data(self, robot_ids: List[int]):
+        state = dict()
+        for robot_id in robot_ids:
+            state[robot_id] = self.robots[robot_id].get_ft_sensor_data()
+        return state
+
+    def get_force_control_gain(self, robot_ids: List[int]):
+        state = dict()
+        for robot_id in robot_ids:
+            state[robot_id] = self.robots[robot_id].get_force_control_gain()
+        return state
+

@@ -29,7 +29,7 @@ Configure robot and task in `data_collector/config.py`.
 ### 3. Collect data
 Run data collector.
 ```bash
-python collect_data.py
+python collect_data.py [CONFIG_NAME]
 ```
 The high-level command is assigned by keyboard. The keyboard commands in the present setting are as follows:
 

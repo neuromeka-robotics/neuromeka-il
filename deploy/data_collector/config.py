@@ -17,7 +17,7 @@ CONFIGS = {
             robot_params = {
                 0: {
                     "ip": "192.168.0.151",
-                    "home_pos": [0., 0., 0., 0., 0., 0.],
+                    "home_pos": [0., 0, -90., 0., -90., 0.],
                     "gripper": {
                         "enable": False,
                         "type": "RobotiqUSBClient",
@@ -31,12 +31,14 @@ CONFIGS = {
                         "move_vel_scale": 50.,  # 0 ~ 100
                         "move_acc_scale": 50.  # 0 ~ 1000
                     },
-                    # Uncomment to use force control (Check if your robot supports force control)
-                    #"force_mode": {
-                    #    "enable": False,
-                    #    "des_force": [0, 0, 0, 0, 0, 0], # Tracking force/torque in X, Y, Z, Roll, Pitch, Yaw. Put 0 for compliant control
-                    #    "enabled_force": [False, False, False, False, False, False], # Enable force control in X, Y, Z, Roll, Pitch, Yaw
-                    #}
+                    "init_kwargs": {
+                        # Uncomment to use force control (Check if your robot supports force control)
+                        #"force_mode": {
+                        #    "enable": False,
+                        #    "des_force": [0, 0, 0, 0, 0, 0], # Tracking force/torque in X, Y, Z, Roll, Pitch, Yaw. Put 0 for compliant control
+                        #    "enabled_force": [False, False, False, False, False, False], # Enable force control in X, Y, Z, Roll, Pitch, Yaw
+                        #}
+                    }
                 }
             },
             control_dt = 0.05

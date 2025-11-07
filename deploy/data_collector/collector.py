@@ -379,6 +379,8 @@ class TeleopDataCollector:
                     if "intrinsics" in k:
                         self.traj[k] = v # To match legacy code
                 elif k.rpartition("_")[0] not in self.data_collector_config.data_to_collect_once:
+                    if "intrinsics" in k:
+                        continue
                     self.traj[k].append(v)
             else:
                 print(f"Ignoring key: {k}")

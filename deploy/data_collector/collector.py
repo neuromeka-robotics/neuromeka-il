@@ -129,13 +129,13 @@ class DataCollectionScheduler(Controller):
                         continue
                     buffer_data[f"{k}_{robot_id}"] = force_gain[fg_k]
             if "force_mode" in self.config.data_to_collect:
-                if "force_mode" in self.robot_config.robot_params:
-                    force_mode_dict = self.robot_config.robot_params["force_mode"]
+                if self.robot_config.robot_params[robot_id].get("init_kwargs", {}).get("force_mode", None) is not None:
+                    force_mode_dict = self.robot_config.robot_params[robot_id]["init_kwargs"]["force_mode"]
                 else:
                     enabled = False
                     des_force = np.zeros(6)
                     enabled_force = [False] * 6
-                    force_mode_dict = {"enabled": enabled, "des_force": des_force, "enabled_force": enabled_force}
+                    force_mode_dict = {"enable": enabled, "des_force": des_force, "enabled_force": enabled_force}
                 for k in self.config.data_to_collect["force_mode"]:
                     fm_k = k.removeprefix("fm_")
                     if fm_k not in force_mode_dict:
@@ -374,6 +374,8 @@ class TeleopDataCollector:
             if k in self.data_types:
                 if self.traj[k] is None:
                     self.traj[k] = [v]
+                    if "intrinsics" in k:
+                        self.traj[k] = v # To match legacy code
                 elif k.rpartition("_")[0] not in self.data_collector_config.data_to_collect_once:
                     self.traj[k].append(v)
             else:

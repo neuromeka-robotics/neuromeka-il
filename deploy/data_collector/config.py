@@ -95,7 +95,11 @@ CONFIGS = {
                 "wrist": ["rgb", "intrinsics", "depth"],
             },
             "control": ["tele_abs_control", "gripper_command"]
+            #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],
+            #"force_gain": ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif"],
+            #"force_mode": ["fm_enable", "fm_des_force", "fm_enabled_force"],
         },
         data_to_collect_once = ["intrinsics"],
+        #data_to_collect_once = ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif", "fm_enable", "fm_des_force", "fm_enabled_force"]
     ),
 }

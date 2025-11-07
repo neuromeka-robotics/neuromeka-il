@@ -30,6 +30,7 @@ class Robot:
         else:
             self.gripper_client = None
         if "force_mode" in kwargs:
+            print("Setting force mode...")
             self.robot_client.set_force_mode(kwargs["force_mode"])
 
     def get_state(self) -> Dict:

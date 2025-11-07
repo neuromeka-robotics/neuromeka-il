@@ -32,7 +32,9 @@ class Controller:
             for robot_id in self.robot_ids:
                 self.robot[robot_id] = Robot(
                     robot_ip=self.robot_config.robot_params[robot_id]["ip"], 
-                    gripper_config=self.robot_config.robot_params[robot_id].get("gripper", None))
+                    gripper_config=self.robot_config.robot_params[robot_id].get("gripper", None),
+                    **self.robot_config.robot_params[robot_id].get("init_kwargs", {})
+                )
                 
         self.robot_cluster = RobotCluster(robots=self.robot)
         self.exec_set_idle()

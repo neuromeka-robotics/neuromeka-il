@@ -372,11 +372,9 @@ class TeleopDataCollector:
     def update_data_buffer(self, **kwargs):
         for k, v in kwargs.items():
             if k in self.data_types:
-                if k in self.data_collector_config.data_to_collect_once and self.traj[k] is None:
-                    self.traj[k] = v
-                elif self.traj[k] is None:
-                    self.traj[k] = []
-                else:
+                if self.traj[k] is None:
+                    self.traj[k] = [v]
+                elif k.rpartition("_")[0] not in self.data_collector_config.data_to_collect_once:
                     self.traj[k].append(v)
             else:
                 print(f"Ignoring key: {k}")
@@ -385,7 +383,7 @@ class TeleopDataCollector:
         
     def save_data_buffer(self):
         for k in self.traj.keys():
-            if len(self.traj[k]) > 0:
+            if self.traj[k] is not None:
                 if ("rgb" in k) or ("depth" in k):
                     self.traj[k] = np.asarray(self.traj[k])
                 else:
@@ -398,7 +396,7 @@ class TeleopDataCollector:
 
         with h5py.File(f"{self.DATA_DIR}/{self.traj_num}.h5", "w") as hf:
             for k, v in self.traj.items():
-                if len(v) > 0:
+                if v is not None:
                     hf.create_dataset(k, data=v)
         
         print(f"Data saved to {self.DATA_DIR}/{self.traj_num}.h5")

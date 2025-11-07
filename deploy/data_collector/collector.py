@@ -127,7 +127,7 @@ class DataCollectionScheduler(Controller):
                     fg_k = k.removeprefix("fg_")
                     if fg_k not in force_gain:
                         continue
-                    buffer_data[f"{k}_{robot_id}"] = force_gain[k]
+                    buffer_data[f"{k}_{robot_id}"] = force_gain[fg_k]
             if "force_mode" in self.config.data_to_collect:
                 if "force_mode" in self.robot_config.robot_params:
                     force_mode_dict = self.robot_config.robot_params["force_mode"]
@@ -140,7 +140,7 @@ class DataCollectionScheduler(Controller):
                     fm_k = k.removeprefix("fm_")
                     if fm_k not in force_mode_dict:
                         continue
-                    buffer_data[f"{k}_{robot_id}"] = force_mode_dict[k]
+                    buffer_data[f"{k}_{robot_id}"] = force_mode_dict[fm_k]
         
         # get exteroception
         if "camera" in self.config.data_to_collect:

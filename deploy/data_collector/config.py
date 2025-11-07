@@ -54,12 +54,12 @@ CONFIGS = {
             model_config = None,
 
             # To use either vive or spacemouse for teleoperation, uncomment the corresponding data_config
-            # data_config = DATA_CONFIG(
-            #     device_type = "vive",
-            #     device_params = {
-            #         "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
-            #     }
-            # ),
+            data_config = DATA_CONFIG(
+                device_type = "vive",
+                device_params = {
+                    "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
+                }
+            ),
             # data_config = DATA_CONFIG(
             #     device_type = "spacemouse",
             #     device_params = {

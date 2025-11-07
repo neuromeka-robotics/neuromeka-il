@@ -252,7 +252,9 @@ class TeleopDataCollector:
             for robot_id in self.robot_ids:
                 if self.task_config.data_config.device_type == "vive":
                     from data_collector.device.vive import Vive
-                    self.device[robot_id] = Vive()
+                    self.device[robot_id] = Vive(
+                        device_params=self.task_config.data_config.device_params,
+                    )
                 if self.task_config.data_config.device_type == "spacemouse":
                     from data_collector.device.spacemouse import SpaceMouse
                     self.device[robot_id] = SpaceMouse(

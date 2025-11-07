@@ -7,10 +7,6 @@ from data_collector.device.base import BaseDevice
 from helper.math_utils import MathFunc, TaskControlTransformation
 from helper.extra_utils import ROBOT_CONTROL_MODE
 
-# config
-from data_collector.config import DATA_COLLECTOR_TASK_CONFIG
-
-
 class Vive(BaseDevice):
     CONTROL_MODE = ROBOT_CONTROL_MODE.TELE_TASK_ABSOLUTE
     
@@ -18,10 +14,11 @@ class Vive(BaseDevice):
     DEVICE_POOLS = None
     DEVICE_IDX = 1
     
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.device_name = f"controller_{Vive.DEVICE_IDX}"
+        self.device_params = kwargs["device_params"]
         self.control_transform = TaskControlTransformation(
-            fixed_robot_to_fixed_device_euler=DATA_COLLECTOR_TASK_CONFIG.data_config.device_params["calib_uvw"])
+            fixed_robot_to_fixed_device_euler=self.device_params["calib_uvw"])
         
         # Check devices
         if Vive.DEVICE_POOLS is None:

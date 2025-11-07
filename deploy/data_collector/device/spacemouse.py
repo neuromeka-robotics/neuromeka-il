@@ -9,9 +9,6 @@ from data_collector.device.base import BaseDevice
 from helper.math_utils import MathFunc, TaskControlTransformation
 from helper.extra_utils import ROBOT_CONTROL_MODE
 
-# config
-#from data_collector.config import DATA_COLLECTOR_TASK_CONFIG, DATA_COLLECTOR_ROBOT_CONFIG
-
 class SpaceMouse(BaseDevice):
     # static variable shard among all instances
     DEVICE_IDX = 1

@@ -13,7 +13,7 @@ from helper.extra_utils import ROBOT_CONTROL_MODE, ROBOT_STATE
 
 
 class Robot:
-    def __init__(self, robot_ip: str, gripper_config: Dict | None = None):
+    def __init__(self, robot_ip: str, gripper_config: Dict | None = None, **kwargs):
         self.robot_client = RobotClient(robot_ip=robot_ip)
         
         if gripper_config is not None and gripper_config["enable"]:
@@ -29,6 +29,8 @@ class Robot:
                 raise ValueError(f"{gripper_config['type']} not found in communication.gripper") from None
         else:
             self.gripper_client = None
+        if "force_mode" in kwargs:
+            self.robot_client.set_force_mode(kwargs["force_mode"])
 
     def get_state(self) -> Dict:
         state = self.robot_client.get_robot_data()
@@ -160,6 +162,12 @@ class Robot:
     def get_force_control_gain(self):
         return self.robot_client.get_force_control_gain()
 
+    def get_force_mode(self):
+        return self.robot_client.get_force_mode()
+
+    def set_force_mode(self, force_mode_dict):
+        return self.robot_client.set_force_mode(force_mode_dict)
+
     def set_ft_zero(self):
         return self.robot_client.get_ft_zero()
         
@@ -273,4 +281,14 @@ class RobotCluster:
     def set_ft_zero(self, robot_ids: List[int]):
         for robot_id in robot_ids:
             self.robots[robot_id].set_ft_zero()
+
+    def get_force_mode(self, robot_ids: List[int]):
+        state = dict()
+        for robot_id in robot_ids:
+            state[robot_id] = self.robots[robot_id].get_force_mode()
+        return state
+
+    def set_force_mode(self, robot_ids: List[int], force_mode_dicts: List):
+        for robot_id, force_mode_dict in zip(robot_ids, force_mode_dicts):
+            self.robots[robot_id].set_force_mode(force_mode_dict)
 

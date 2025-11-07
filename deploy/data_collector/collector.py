@@ -100,6 +100,54 @@ class DataCollectionScheduler(Controller):
                 
             self._collection_triggered = False
 
+    def collect_buffer(self):
+        buffer_data = dict()
+            
+        # get proprioception
+        for robot_id in self.robot_ids:
+            if "proprio" in self.config.data_to_collect:
+                control_dat = self.robot[robot_id].get_state()
+                for k in self.config.data_to_collect["proprio"]:
+                    buffer_data[f"{k}_{robot_id}"] = control_dat[k]
+            if "gripper" in self.config.data_to_collect:
+                gripper_state = self.robot[robot_id].get_gripper_state()
+                if "gripper_position" in self.config.data_to_collect["proprio"]:
+                    buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
+                if "grasp_state" in self.config.data_to_collect["proprio"]:
+                    buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
+            if "ft" in self.config.data_to_collect:
+                ft_data = self.robot[robot_id].get_transformed_ft_sensor_data()
+                for k in self.config.data_to_collect["ft"]:
+                    if k not in ft_data:
+                        continue
+                    buffer_data[f"{k}_{robot_id}"] = ft_data[k]
+            if "force_gain" in self.config.data_to_collect:
+                force_gain = self.robot[robot_id].get_force_control_gain()
+                for k in self.config.data_to_collect["force_gain"]:
+                    if k not in force_gain:
+                        continue
+                    buffer_data[f"force_gain_{k}_{robot_id}"] = force_gain[k]
+            if "force_mode" in self.config.data_to_collect:
+                if "force_mode" in self.robot_config.robot_params:
+                    force_mode_dict = self.robot_config.robot_params["force_mode"]
+                else:
+                    enabled = False
+                    des_force = np.zeros(6)
+                    enabled_force = [False] * 6
+                    force_mode_dict = {"enabled": enabled, "des_force": des_force, "enabled_force": enabled_force}
+                for k in self.config.data_to_collect["force_mode"]:
+                    if k not in force_mode_dict:
+                        continue
+                    buffer_data[f"force_mode_{k}_{robot_id}"] = force_mode_dict[k]
+        
+        # get exteroception
+        if "camera" in self.config.data_to_collect:
+            for cam_name in self.config.data_to_collect["camera"]:
+                cam_output = self.camera[cam_name].get_all()
+                for k in self.config.data_to_collect["camera"][cam_name]:
+                    buffer_data[f"images.{k}.{cam_name}"] = cam_output[k]
+        return buffer_data
+
     def _collection_fn(self):
         # pre execution
         self.exec_start_movement()
@@ -112,44 +160,7 @@ class DataCollectionScheduler(Controller):
         # start
         while self._collection_triggered:
             control_start = time.time()
-            
-            buffer_data = dict()
-                
-            # get proprioception
-            for robot_id in self.robot_ids:
-                if "proprio" in self.config.data_to_collect:
-                    control_dat = self.robot[robot_id].get_state()
-                    for k in self.config.data_to_collect["proprio"]:
-                        buffer_data[f"{k}_{robot_id}"] = control_dat[k]
-                if "gripper" in self.config.data_to_collect:
-                    gripper_state = self.robot[robot_id].get_gripper_state()
-                    if "gripper_position" in self.config.data_to_collect["proprio"]:
-                        buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
-                    if "grasp_state" in self.config.data_to_collect["proprio"]:
-                        buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
-                if "other" in self.config.data_to_collect:
-                    if "ft" in self.config.data_to_collect["other"]:
-                        ft_data = self.robot[robot_id].get_transformed_ft_sensor_data()
-                        ft_data = [ft_data[k] for k in self.config.data_to_collect["other"]["ft"]]
-                        if len(ft_data) > 0:
-                            ft_data = np.array(ft_data)
-                            buffer_data[f"ft_{robot_id}"] = ft_data
-                    if "force_gain" in self.config.data_to_collect["other"]:
-                        force_gain = self.robot[robot_id].get_force_control_gain()
-                        collected_force_gain = []
-                        for k in self.config.data_to_collect["other"]["force_gain"]:
-                            collected_force_gain.extend(force_gain[k])
-                            #force_gain = [(force_gain[k] for k in self.config.data_to_collect["other"]["force_gain"]]
-                        if len(force_gain) > 0:
-                            collected_force_gain = np.array(collected_force_gain)
-                            buffer_data[f"force_gain_{robot_id}"] = collected_force_gain
-            
-            # get exteroception
-            if "camera" in self.config.data_to_collect:
-                for cam_name in self.config.data_to_collect["camera"]:
-                    cam_output = self.camera[cam_name].get_all()
-                    for k in self.config.data_to_collect["camera"][cam_name]:
-                        buffer_data[f"images.{k}.{cam_name}"] = cam_output[k]
+            buffer_data = self.collect_buffer() 
                     
             # get device data
             device_data = self.data_collector.get_device_input(
@@ -335,7 +346,6 @@ class TeleopDataCollector:
         data_to_collect = []
         for k in self.data_collector_config.data_to_collect.keys():
             if k == "camera":
-                #data_to_collect.extend(self.config.data_to_collect[k])
                 continue
             else:
                 data_to_collect.extend(self.data_collector_config.data_to_collect[k])
@@ -346,10 +356,6 @@ class TeleopDataCollector:
         for cam_name in self.data_collector_config.data_to_collect["camera"]:
             for data in self.data_collector_config.data_to_collect["camera"][cam_name]:
                 self.data_types.append(f"images.{data}.{cam_name}")
-            #self.data_types.append(f"images.rgb.{cam_name}")
-            #if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
-            #    self.data_types.append(f"images.depth.{cam_name}")
-            #self.data_types.append(f"images.intrinsics.{cam_name}")
         
         self.traj = dict()
         for data_type in self.data_types:
@@ -364,7 +370,7 @@ class TeleopDataCollector:
     def update_data_buffer(self, **kwargs):
         for k, v in kwargs.items():
             if k in self.data_types:
-                if "intrinsics" in k:
+                if k in self.data_collector_config.data_to_collect_once:
                     if len(self.traj[k]) == 0:
                         self.traj[k] = v
                 else:
@@ -383,7 +389,7 @@ class TeleopDataCollector:
                     self.traj[k] = np.asarray(self.traj[k]).astype(np.float32)
                 
                 if len(self.traj[k].shape) == 1:
-                    self.traj[k] = self.traj[k][..., np.newaxis]  # change shapre from (T,) to (T, 1)
+                    self.traj[k] = self.traj[k][..., np.newaxis]  # change shape from (T,) to (T, 1)
                     
                 print(f"{k}: {self.traj[k].shape} ({self.traj[k].dtype})")
 
@@ -428,6 +434,19 @@ class TeleopDataCollector:
 
         # Check proprioception
         for robot_id in self.robot_ids:
+            #for data_key in self.data_collector_config.data_to_collect:
+            #    for key in self.data_collector_config.data_to_collect[data_key]:
+            #        if f"{key}_{robot_id}" in collected_traj:
+            #            traj = collected_traj[f"{key}_{robot_id}"]
+            #            n_steps = traj.shape[0]
+            #            time_traj = np.arange(n_steps) * 1 / FREQUENCY
+            #            plt.plot(time_traj, traj)
+            #            plt.xlabel("Time [s]")
+            #            plt.ylabel(key)
+            #            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{key}_{robot_id}.png")
+            #            plt.clf()
+            #            plt.close()
+
             if "proprio" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["proprio"]:
                 if "q" in self.data_collector_config.data_to_collect["proprio"]:
                     joint_pos_traj = collected_traj[f"q_{robot_id}"]
@@ -519,25 +538,38 @@ class TeleopDataCollector:
                     plt.clf()
                     plt.close()
 
-            if "other" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["other"]:
-                if "ft" in self.data_collector_config.data_to_collect["other"]:
-                    ft_traj = collected_traj[f"ft_{robot_id}"]
+            if "ft" in self.data_collector_config.data_to_collect:
+                for k in self.data_collector_config.data_to_collect["ft"]:
+                    ft_traj = collected_traj[f"{k}_{robot_id}"]
                     n_steps = ft_traj.shape[0]
                     time_traj = np.arange(n_steps) * 1 / FREQUENCY
                     plt.plot(time_traj, ft_traj)
                     plt.xlabel("Time [s]")
-                    plt.ylabel("FT")
-                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_ft_{robot_id}.png")
+                    plt.ylabel(k)
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{k}_{robot_id}.png")
                     plt.clf()
                     plt.close()
 
-                if "force_gain" in self.data_collector_config.data_to_collect["other"]:
-                    force_gain_traj = collected_traj[f"force_gain_{robot_id}"]
+            if "force_gain" in self.data_collector_config.data_to_collect:
+                for k in self.data_collector_config.data_to_collect["force_gain"]:
+                    force_gain_traj = collected_traj[f"force_gain_{k}_{robot_id}"]
                     n_steps = force_gain_traj.shape[0]
                     time_traj = np.arange(n_steps) * 1 / FREQUENCY
                     plt.plot(time_traj, force_gain_traj)
                     plt.xlabel("Time [s]")
-                    plt.ylabel("Force gain")
-                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_gain_{robot_id}.png")
+                    plt.ylabel(f"Force gain {k}")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_gain_{k}_{robot_id}.png")
+                    plt.clf()
+                    plt.close()
+
+            if "force_mode" in self.data_collector_config.data_to_collect:
+                for k in self.data_collector_config.data_to_collect["force_mode"]:
+                    force_mode_traj = collected_traj[f"force_mode_{k}_{robot_id}"]
+                    n_steps = force_mode_traj.shape[0]
+                    time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                    plt.plot(time_traj, force_mode_traj)
+                    plt.xlabel("Time [s]")
+                    plt.ylabel(f"Force mode {k}")
+                    plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_mode_{k}_{robot_id}.png")
                     plt.clf()
                     plt.close()

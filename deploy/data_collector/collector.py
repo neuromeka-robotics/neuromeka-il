@@ -442,137 +442,14 @@ class TeleopDataCollector:
                     if f"{key}_{robot_id}" in collected_traj:
                         traj = collected_traj[f"{key}_{robot_id}"]
                         n_steps = traj.shape[0]
-                        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-                        plt.plot(time_traj, traj)
-                        plt.xlabel("Time [s]")
-                        plt.ylabel(key)
-                        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{key}_{robot_id}.png")
-                        plt.clf()
-                        plt.close()
-
-            #if "proprio" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["proprio"]:
-            #    if "q" in self.data_collector_config.data_to_collect["proprio"]:
-            #        joint_pos_traj = collected_traj[f"q_{robot_id}"]
-            #        n_steps = joint_pos_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, joint_pos_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Joint position")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_pos_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #    if "qdot" in self.data_collector_config.data_to_collect["proprio"]:
-            #        joint_vel_traj = collected_traj[f"qdot_{robot_id}"]
-            #        n_steps = joint_vel_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, joint_vel_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Joint velocity")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_joint_vel_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #    if "p" in self.data_collector_config.data_to_collect["proprio"]:
-            #        end_pose_traj = collected_traj[f"p_{robot_id}"]
-            #        n_steps = end_pose_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, end_pose_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("End-effector position")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_pos_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #    if "pdot" in self.data_collector_config.data_to_collect["proprio"]:
-            #        end_vel_traj = collected_traj[f"pdot_{robot_id}"]
-            #        n_steps = end_vel_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, end_vel_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("End-effector velocity")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_end_vel_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-            #
-            #if "control" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["control"]:
-            #    if "tele_abs_control" in self.data_collector_config.data_to_collect["control"]:
-            #        control_traj = collected_traj[f"tele_abs_control_{robot_id}"]
-            #        n_steps = control_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, control_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Control")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_control_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #    if "gripper_command" in self.data_collector_config.data_to_collect["control"]:
-            #        gripper_command_traj = collected_traj[f"gripper_command_{robot_id}"]
-            #        n_steps = gripper_command_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, gripper_command_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Gripper command")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_command_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #if "gripper" in self.data_collector_config.data_to_collect and self.data_collector_config.data_to_collect["gripper"]:
-            #    if "gripper_position" in self.data_collector_config.data_to_collect["gripper"]:
-            #        gripper_position_traj = collected_traj[f"gripper_position_{robot_id}"]
-            #        n_steps = gripper_position_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, gripper_position_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Gripper position")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_gripper_position_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #    if "grasp_state" in self.data_collector_config.data_to_collect["gripper"]:
-            #        grasp_state_traj = collected_traj[f"grasp_state_{robot_id}"]
-            #        n_steps = grasp_state_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, grasp_state_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel("Grasp state")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_grasp_state_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #if "ft" in self.data_collector_config.data_to_collect:
-            #    for k in self.data_collector_config.data_to_collect["ft"]:
-            #        ft_traj = collected_traj[f"{k}_{robot_id}"]
-            #        n_steps = ft_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, ft_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel(k)
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{k}_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #if "force_gain" in self.data_collector_config.data_to_collect:
-            #    for k in self.data_collector_config.data_to_collect["force_gain"]:
-            #        force_gain_traj = collected_traj[f"force_gain_{k}_{robot_id}"]
-            #        n_steps = force_gain_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, force_gain_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel(f"Force gain {k}")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_gain_{k}_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
-
-            #if "force_mode" in self.data_collector_config.data_to_collect:
-            #    for k in self.data_collector_config.data_to_collect["force_mode"]:
-            #        force_mode_traj = collected_traj[f"force_mode_{k}_{robot_id}"]
-            #        n_steps = force_mode_traj.shape[0]
-            #        time_traj = np.arange(n_steps) * 1 / FREQUENCY
-            #        plt.plot(time_traj, force_mode_traj)
-            #        plt.xlabel("Time [s]")
-            #        plt.ylabel(f"Force mode {k}")
-            #        plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_force_mode_{k}_{robot_id}.png")
-            #        plt.clf()
-            #        plt.close()
+                        if n_steps > 1:
+                            time_traj = np.arange(n_steps) * 1 / FREQUENCY
+                            plt.plot(time_traj, traj)
+                            plt.xlabel("Time [s]")
+                            plt.ylabel(key)
+                            plt.savefig(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{key}_{robot_id}.png")
+                            plt.clf()
+                            plt.close()
+                        else:
+                            with open(f"{self.DATA_VIZ_DIR}/{VISUALIZE_DATA_ID}_{key}_{robot_id}.txt", "w") as f:
+                                f.write(str(traj[0]))

@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # helper functions
-from helper.extra_utils import ROBOT_STATE, KeyboardListener
+from helper.extra_utils import ROBOT_STATE
 from helper.controller_utils import Controller
 from perception.realsense import RealsenseCamHandler
 from data_collector.device.base import BaseDevice
@@ -82,7 +82,6 @@ class DataCollectionScheduler(Controller):
             self._collection_thread.join()
             
             # save trajectory if it's OK
-            #command_listener = KeyboardListener(key_targets=["s", "e"])
             print("Click 's' to save / Click 'e' to not save")
             while True:
                 #command = command_listener.get_key_states()

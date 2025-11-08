@@ -14,17 +14,17 @@ from communication.robot import Robot
 from perception.realsense import RealsenseCamHandler
 
 # nn models
-from middle_level_controller.act_il.model import *
+from .model import *
 
 # config
-from middle_level_controller.act_il.config import CUSTOM_ROBOT_CONFIG, CUSTOM_TASK_CONFIG
+from .config import CUSTOM_ROBOT_CONFIG, CUSTOM_TASK_CONFIG
 
 
 class NN_controller(Base_NN_controller):
-    ROBOT_CONFIG = CUSTOM_ROBOT_CONFIG
-    ROBOT_IDS = CUSTOM_ROBOT_CONFIG.robot_ids
-    TASK_CONFIG = CUSTOM_TASK_CONFIG
-    TASK_NAME = CUSTOM_TASK_CONFIG.name
+    robot_config = CUSTOM_ROBOT_CONFIG
+    robot_ids = CUSTOM_ROBOT_CONFIG.robot_ids
+    task_config = CUSTOM_TASK_CONFIG
+    task_name = CUSTOM_TASK_CONFIG.name
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot and nn policy
@@ -32,12 +32,12 @@ class NN_controller(Base_NN_controller):
 
         # set camera
         self.camera: Dict[str, RealsenseCamHandler] = kwargs.get("camera", dict())
-        for cam_name in self.TASK_CONFIG.camera_config.cam_names:
+        for cam_name in self.task_config.camera_config.cam_names:
             if cam_name in self.camera.keys():
                 if not self.camera[cam_name]._thread_running:
                     self.camera[cam_name].start()
             else:
-                cam_config = self.TASK_CONFIG.camera_config.cam_params[cam_name]
+                cam_config = self.task_config.camera_config.cam_params[cam_name]
                 
                 self.camera[cam_name] = RealsenseCamHandler(
                     serial_number=cam_config["serial"], 
@@ -53,7 +53,7 @@ class NN_controller(Base_NN_controller):
 
     def load_policy(self):
         if isinstance(self.nn_policy, Empty_NN_policy):
-            self.nn_policy: NN_policy = NN_policy(robot_config=self.ROBOT_CONFIG, task_config=self.TASK_CONFIG)
+            self.nn_policy: NN_policy = NN_policy(robot_config=self.robot_config, task_config=self.task_config)
         
     def exec_nn_control(self, duration: float):
         if not self._control_triggered:
@@ -74,9 +74,9 @@ class NN_controller(Base_NN_controller):
 
     def _nn_control_fn(self, duration: float):
         # check task-specific home position for ALL robots!
-        states = self.robot_cluster.get_state(robot_ids=self.ROBOT_IDS)
-        for robot_id in self.ROBOT_IDS:
-            home_joint_pos = self.ROBOT_CONFIG.robot_params[robot_id]["home_pos"]
+        states = self.robot_cluster.get_state(robot_ids=self.robot_ids)
+        for robot_id in self.robot_ids:
+            home_joint_pos = self.robot_config.robot_params[robot_id]["home_pos"]
             
             if home_joint_pos is not None:
                 home_joint_pos = np.array(home_joint_pos)
@@ -87,7 +87,6 @@ class NN_controller(Base_NN_controller):
                     print(f"Move robot {robot_id} to task-specific home position. (error: {error})")
                     self._control_triggered = False
                     return
-                
         # check gripper usage
         use_gripper = self.nn_policy.use_gripper
         
@@ -109,7 +108,7 @@ class NN_controller(Base_NN_controller):
                 gripper_pos = None
                 grasp_state = None
 
-            for robot_id in self.ROBOT_IDS:
+            for robot_id in self.robot_ids:
                 control_dat = self.robot[robot_id].get_state()
                 
                 op_state.append(control_dat["op_state"])
@@ -151,11 +150,11 @@ class NN_controller(Base_NN_controller):
 
             # get exteroception
             cam_data_dict  = dict()
-            for cam_name in self.TASK_CONFIG.camera_config.cam_names:
+            for cam_name in self.task_config.camera_config.cam_names:
                 cam_output = self.camera[cam_name].get_all()
                 
                 cam_data_dict[f"images.rgb.{cam_name}"] = cam_output["rgb"]  # (H, W, C)
-                if self.TASK_CONFIG.camera_config.cam_params[cam_name].get("enable_depth", False):
+                if self.task_config.camera_config.cam_params[cam_name].get("enable_depth", False):
                     cam_data_dict[f"images.depth.{cam_name}"] = cam_output["depth"]  # (H, W)
                 cam_data_dict[f"images.intrinsics.{cam_name}"] = cam_output["intrinsics"]  # (3, 3)
 
@@ -176,12 +175,12 @@ class NN_controller(Base_NN_controller):
                 nn_control = self.nn_policy(**policy_input)
 
             nn_robot_action = dict()
-            for idx, robot_id in enumerate(self.ROBOT_IDS):
-                nn_robot_action[robot_id] = self.TASK_CONFIG.extra_config.control_post_process_fn(
+            for idx, robot_id in enumerate(self.robot_ids):
+                nn_robot_action[robot_id] = self.task_config.extra_config.control_post_process_fn(
                     nn_control[f"robot_action_{idx}"].tolist())
             if use_gripper:
                 nn_gripper_action = dict()
-                for idx, robot_id in enumerate(self.ROBOT_IDS):
+                for idx, robot_id in enumerate(self.robot_ids):
                     nn_gripper_action[robot_id] = nn_control[f"gripper_action_{idx}"]
 
             # update control state
@@ -198,8 +197,8 @@ class NN_controller(Base_NN_controller):
                 self.robot_cluster.tele_move(
                     action=nn_robot_action,
                     mode="task_abs",
-                    vel_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
-                    acc_scale={robot_id: self.ROBOT_CONFIG.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.ROBOT_CONFIG.robot_ids},
+                    vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
+                    acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
                 )
                 
                 if use_gripper:
@@ -207,14 +206,14 @@ class NN_controller(Base_NN_controller):
 
             # sync control frequency                         
             control_end = time.time()
-            wait_time = self.ROBOT_CONFIG.control_dt - (control_end - control_start)
+            wait_time = self.robot_config.control_dt - (control_end - control_start)
             if wait_time > 0:
                 time.sleep(wait_time)
         
         # soft stop
         self.exec_soft_stop(
             last_action=nn_robot_action,
-            control_period=self.ROBOT_CONFIG.control_dt,
+            control_period=self.robot_config.control_dt,
             mode="task_abs")
 
         # post execution

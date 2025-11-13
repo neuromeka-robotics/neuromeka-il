@@ -98,7 +98,7 @@ class DATA_CONFIG:
     )
     
     def __post_init__(self):
-        assert self.device_type in ["vive"], f"Unavailable device {self.device_type}"
+        assert self.device_type in ["vive", "spacemouse"], f"Unavailable device {self.device_type}"
         
 @dataclass
 class EXTRA_CONFIG:

@@ -49,7 +49,6 @@ dependencies:
   - tk=8.6.14=h39e8969_0
   - tornado=6.5.1=py310h5eee18b_0
   - traitlets=5.14.3=pyhd8ed1ab_1
-  - typing_extensions=4.14.1=pyhe01879c_0
   - tzdata=2025a=h04d1e81_0
   - wcwidth=0.2.13=pyhd8ed1ab_1
   - wheel=0.45.1=py310h06a4308_0
@@ -60,15 +59,20 @@ dependencies:
   - pip:
       - annotated-types==0.7.0
       - antlr4-python3-runtime==4.9.3
+      - atomics==1.0.3
       - certifi==2025.1.31
+      - cffi==2.0.0
       - charset-normalizer==3.4.1
       - click==8.1.8
+      - contourpy==1.3.2
       - cycler==0.12.1
       - docker-pycreds==0.4.0
       - einops==0.8.1
       - evdev==1.9.2
       - filelock==3.17.0
+      - fonttools==4.60.1
       - fsspec==2025.2.0
+      - getch==1.0
       - gitdb==4.0.12
       - gitpython==3.1.44
       - grpcio==1.59.0
@@ -85,6 +89,7 @@ dependencies:
       - netifaces2==0.0.22
       - networkx==3.4.2
       - neuromeka==3.4.0.1
+      - nodeenv==1.9.1
       - numpy==1.26.4
       - nvidia-cublas-cu12==12.4.5.8
       - nvidia-cuda-cupti-cu12==12.4.127
@@ -107,11 +112,13 @@ dependencies:
       - platformdirs==4.3.6
       - protobuf==4.25.4
       - psutil==7.0.0
+      - pycparser==2.23
       - pydantic==2.10.6
       - pydantic-core==2.27.2
       - pymodbustcp==0.2.1
       - pynput==1.8.1
       - pyparsing==3.2.3
+      - pyrealsense2==2.56.5.9235
       - pyrobotiqgripper==1.0.1
       - pyserial==3.5
       - python-statemachine==2.5.0
@@ -121,9 +128,11 @@ dependencies:
       - requests==2.31.0
       - ruamel-yaml==0.18.15
       - ruamel-yaml-clib==0.2.12
+      - scipy==1.15.3
       - sentry-sdk==2.22.0
       - setproctitle==1.3.5
       - smmap==5.0.2
+      - spnav @ https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz 
       - sympy==1.13.1
       - torch==2.6.0
       - torchaudio==2.6.0

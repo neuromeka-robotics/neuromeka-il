@@ -117,7 +117,7 @@ def interpolate_task_trajectory(waypoints: np.ndarray, control_dt: float) -> np.
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--execute", action="store_true", help="Actually execute the cuboid after preview/confirmation.")
+    parser.add_argument("--execute", action="store_true", help="Actually execute the cuboid after preview.")
     return parser
 
 
@@ -209,8 +209,10 @@ def execute_and_collect(
     last_target = trajectory[0]
 
     print("Starting task-absolute teleop...")
-    robot.start_teleop(mode="task_abs")
-    time.sleep(0.2)
+    from helper.extra_utils import ROBOT_STATE
+    while robot.get_state()["op_state"] != ROBOT_STATE.TELE_OP:
+        robot.start_teleop(mode="task_abs")
+        time.sleep(0.2)
     next_tick = time.monotonic()
     try:
         for target in trajectory:
@@ -270,10 +272,6 @@ def main() -> None:
     if not args.execute:
         print("Dry run only. Re-run with --execute after checking the path.")
         return
-    answer = input("Type EXECUTE to start robot task-absolute teleop cuboid motion: ").strip()
-    if answer != "EXECUTE":
-        raise SystemExit("Aborted: confirmation did not match EXECUTE.")
-
     vive_pool, vive_device = open_vive_device()  # keep pool alive while sampling
     _ = vive_pool
 

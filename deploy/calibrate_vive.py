@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from communication.robot import Robot
 
 DEFAULT_CONFIG_NAME = "default"
-CUBOID_SIDE_MM = 300.0
+CUBOID_SIDE_MM = 100.0
 DEFAULT_CONTROL_DT = 0.05
 CALIBRATION_SPEED_MM_S = 50.0
 
@@ -40,9 +40,9 @@ def generate_cuboid_waypoints(initial_pose, side_mm=300.):
         (0, 1, 0), (0, 0, 0),
     ]
     waypoints = []
-    for bits in vertex_bits:
+    for x_bit, y_bit, z_bit in vertex_bits:
         pose = initial_pose.copy()
-        pose[:3] += side * np.asarray(bits, dtype=np.float64)
+        pose[:3] += side * np.asarray([x_bit, y_bit, -z_bit], dtype=np.float64)
         waypoints.append(pose)
     return np.asarray(waypoints)
 
@@ -214,27 +214,19 @@ def execute_and_collect(
         robot.start_teleop(mode="task_abs")
         time.sleep(0.2)
     next_tick = time.monotonic()
-    try:
-        for target in trajectory:
-            last_target = target
-            robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
-            sample = collect_sample(robot, vive_device, target)
-            if sample is not None:
-                samples.append(sample)
+    for target in trajectory:
+        last_target = target
+        print(target.tolist())
+        robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
+        sample = collect_sample(robot, vive_device, target)
+        if sample is not None:
+            samples.append(sample)
 
-            next_tick += control_dt
-            wait_time = next_tick - time.monotonic()
-            if wait_time > 0:
-                time.sleep(wait_time)
-    finally:
-        try:
-            hold_until = time.monotonic() + 0.2
-            while time.monotonic() < hold_until:
-                robot.tele_move(action=last_target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
-                time.sleep(control_dt)
-        finally:
-            print("Stopping teleop...")
-            robot.stop_teleop()
+        next_tick += control_dt
+        wait_time = next_tick - time.monotonic()
+        if wait_time > 0:
+            time.sleep(wait_time)
+    robot.stop_teleop()
     return samples
 
 

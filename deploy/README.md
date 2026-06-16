@@ -20,8 +20,42 @@ Data collection and policy deployment both require the configuration of necessar
 ## Data collection
 Most imitation learning requires collecting demonstration data by teleoperating real-world robots. The codebase supports teleoperating Neuromeka robots with [VIVE Pro 2](https://www.vive.com/us/product/vive-pro2-full-kit/overview/). Follow below three steps.
 
+Before using VIVE teleoperation or calibration:
+
+- Install SteamVR by following Steam's official instructions: <https://help.steampowered.com/en/faqs/view/18A4-1E10-8A94-3DDA>.
+- Start SteamVR and confirm the VIVE base stations and tracker/controller are connected and tracking before running calibration or data collection.
+
+Before using SpaceMouse teleoperation, install and start the SpaceMouse daemon:
+```bash
+sudo apt install libspnav-dev spacenavd
+sudo systemctl start spacenavd
+```
+
 ### 1. Calibrate VIVE Pro 2
-Calibrate vive with Neuromeka Conty. Then, copy-paste the calibration result from the Control Box PC (path: `/home/user/release/IndyDeployment/TeleOp/Calibs/*.json`) to DATA_CONFIG.device_params["calib_uvw"].
+Attach the VIVE tracker/controller rigidly to the robot end effector before calibration. It may be offset from the TCP and does not need to be axis-aligned, but it must not slip or rotate relative to the robot during calibration. Keep it visible to the VIVE base stations and make sure there is at least 100 mm of free motion in robot +X, +Y, and -Z from the current pose.
+
+Preview the fixed cuboid calibration path first:
+```bash
+python calibrate_vive.py
+```
+
+If the preview is safe, execute the calibration motion:
+```bash
+python calibrate_vive.py --execute
+```
+
+After execution, inspect the printed calibration result:
+
+- `calib_uvw`: Euler angles in radians. After the diagnostics look good, copy this value to `DATA_CONFIG.device_params["calib_uvw"]`.
+- `Estimated VIVE-to-robot rotation R_RV`: the 3x3 rotation matrix mapping VIVE-frame motion deltas into robot-frame motion deltas. Use it to sanity-check axis directions.
+- `4x4 display matrix`: the same rotation shown in homogeneous-matrix form with zero translation. Teleoperation uses relative motion, so this translation term is intentionally not calibrated.
+- `Diagnostics`:
+  - `num_samples`: number of valid paired robot/VIVE samples used; more samples are better.
+  - `singular_values`: indicates whether the calibration motion spans enough independent directions; values should not collapse to a single dominant direction.
+  - `rms_error_mm`: fit error in millimeters; lower is better. A large value can indicate VIVE tracking loss, a slipping mount, collision/dragging cables, or insufficient robot motion.
+  - `determinant`: should be close to `1.0`; a negative or far-from-one value indicates an invalid rotation estimate.
+
+Only update `DATA_CONFIG.device_params["calib_uvw"]` after these checks look reasonable. If the diagnostics look bad, fix the VIVE visibility/mounting or robot clearance and rerun calibration instead of copying the result.
 
 ### 2. Configure robot and task
 Configure robot and task in `data_collector/config.py`.

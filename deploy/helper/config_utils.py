@@ -34,6 +34,9 @@ class ROBOT_CONFIG:
     )
     
     control_dt: float = 0.05
+    # Optional Robot subclass used by Controller when constructing connections.
+    # Individual robot entries may override this with a ``robot_class`` key.
+    robot_class: type | None = None
     
     def __post_init__(self):
         self.robot_ids = list(self.robot_params.keys())
@@ -42,7 +45,18 @@ class ROBOT_CONFIG:
             assert "ip" in self.robot_params[robot_id].keys()
             
             assert "home_pos" in self.robot_params[robot_id].keys()
-            assert isinstance(self.robot_params[robot_id]["home_pos"], list) or isinstance(self.robot_params[robot_id]["home_pos"], None)
+            home_pos = self.robot_params[robot_id]["home_pos"]
+            if home_pos is not None and not isinstance(home_pos, list):
+                raise TypeError(
+                    f"home_pos for robot {robot_id} must be a list or None")
+            robot_class = self.robot_params[robot_id].get(
+                "robot_class", self.robot_class)
+            expected_dof = getattr(robot_class, "JOINT_DOF", None)
+            if (home_pos is not None and expected_dof is not None
+                    and len(home_pos) != expected_dof):
+                raise ValueError(
+                    f"home_pos for robot {robot_id} must contain exactly "
+                    f"{expected_dof} values; got {len(home_pos)}")
             
             assert "gripper" in self.robot_params[robot_id].keys()
             assert "enable" in self.robot_params[robot_id]["gripper"].keys() and isinstance(self.robot_params[robot_id]["gripper"]["enable"], bool)
@@ -96,9 +110,14 @@ class DATA_CONFIG:
             "calib_uvw": [-1.5413670975757867, 3.1056404500490942, 1.1692256106471774]
         }
     )
+    # Optional BaseDevice subclass for project-specific task- or joint-space
+    # devices. When set, it takes precedence over device_type.
+    device_class: type | None = None
     
     def __post_init__(self):
-        assert self.device_type in ["vive", "spacemouse"], f"Unavailable device {self.device_type}"
+        if self.device_class is None:
+            assert self.device_type in ["vive", "spacemouse"], \
+                f"Unavailable device {self.device_type}"
         
 @dataclass
 class EXTRA_CONFIG:
@@ -108,13 +127,53 @@ class EXTRA_CONFIG:
     
     control_post_process_fn : Callable = lambda x: x
 
+
+@dataclass
+class COMPLIANCE_CONFIG:
+    enable: bool = False
+    stiffness: List[int] | None = None
+
+
+@dataclass
+class TELEOP_CONFIG:
+    # Device output mode comes from BaseDevice.CONTROL_MODE. This is the mode
+    # actually sent to the robot after FK/IK conversion.
+    robot_control_mode: str = "task_abs"
+    arm_index: int = 0
+    # IK is used only when a task-space device drives joint-space teleop.
+    # STEP does not support locking; Pink locks joints inside its optimization.
+    ik_type: str = "step"
+    pink_config_path: str | None = None
+    # During task->joint conversion, keep all joints outside the selected
+    # head/arm chain at their current values.
+    lock_non_selected_joints: bool = False
+    compliance: COMPLIANCE_CONFIG = field(default_factory=COMPLIANCE_CONFIG)
+
+    def __post_init__(self):
+        if self.robot_control_mode not in ["joint_abs", "task_abs"]:
+            raise ValueError(
+                f"Unavailable robot control mode {self.robot_control_mode}")
+        if self.arm_index < 0:
+            raise ValueError("arm_index must be non-negative")
+        if self.ik_type not in ["step", "pink"]:
+            raise ValueError(f"Unavailable IK type {self.ik_type}")
+        if not isinstance(self.lock_non_selected_joints, bool):
+            raise TypeError("lock_non_selected_joints must be a bool")
+        if self.ik_type == "step" and self.lock_non_selected_joints:
+            raise ValueError(
+                "lock_non_selected_joints is unavailable for STEP IK; "
+                "use ik_type='pink' or disable locking")
+        if self.ik_type == "pink" and not self.pink_config_path:
+            raise ValueError("pink_config_path is required for Pink IK")
+
 @dataclass
 class TASK_CONFIG:
     name: str = "base"
-    camera_config: CAMERA_CONFIG | None = CAMERA_CONFIG()
-    model_config: MODEL_CONFIG | None = MODEL_CONFIG()
-    data_config: DATA_CONFIG | None = DATA_CONFIG()
-    extra_config: EXTRA_CONFIG = EXTRA_CONFIG()
+    camera_config: CAMERA_CONFIG | None = field(default_factory=CAMERA_CONFIG)
+    model_config: MODEL_CONFIG | None = field(default_factory=MODEL_CONFIG)
+    data_config: DATA_CONFIG | None = field(default_factory=DATA_CONFIG)
+    extra_config: EXTRA_CONFIG = field(default_factory=EXTRA_CONFIG)
+    teleop_config: TELEOP_CONFIG = field(default_factory=TELEOP_CONFIG)
     
     def __post_init__(self):
         assert self.camera_config is not None, \

@@ -1,7 +1,15 @@
 import os
+from pathlib import Path
 from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
 from helper.extra_utils import home_movement_w_open_gripper
+from communication.humanoid import HumanoidRobot
+
+
+ROBOT_INTERFACE_EIR_CONFIG = (
+    Path(__file__).resolve().parents[3]
+    / "robot_interface/robot_interface/config/eir.yaml"
+)
 
 
 @dataclass
@@ -11,25 +19,41 @@ class DataCollectorConfig:
     data_to_collect: dict[str]
     data_to_collect_once: List[str] # Data that needs to be collected only once per episode
 
+    def __post_init__(self):
+        expected_control = (
+            f"{self.task_config.teleop_config.robot_control_mode}_control")
+        configured_controls = self.data_to_collect.get("control", [])
+        if expected_control not in configured_controls:
+            raise ValueError(
+                "data_to_collect['control'] must explicitly contain "
+                f"'{expected_control}' for robot_control_mode="
+                f"'{self.task_config.teleop_config.robot_control_mode}'")
+
 CONFIGS = {
     "default": DataCollectorConfig(
         robot_config = ROBOT_CONFIG(
+            robot_class = HumanoidRobot,
             robot_params = {
                 0: {
-                    "ip": "192.168.0.151",
-                    "home_pos": [0., 0, -90., 0., -90., 0.],
+                    "ip": "192.168.0.180",
+                    "home_pos": [-0.022166412, 0.01979957, 0.0222174, 0.025983755, -138.70251, -25.199673, 76.68596, -99.856125, 77.27083, -37.662327, 4.3381577, 137.05807, 25.11176, -73.127144, 102.0329, -73.94338, 37.87939, 0.020310974, 0.0, 0.0, 0.0, 0.0],
                     "gripper": {
                         "enable": False,
-                        "type": "RobotiqUSBClient",
-                        "params": {
-                            "port": "/dev/robotiq_2f85"
-                        }
+                        "backend": "integrated_dh",
+                        "tool_index": 0,
+                        # Values verified against the IndyDCP example/PSF
+                        # backend. All commands send exactly four PVT values.
+                        "gripper_type": 2,
+                        "activate_command": 0,
+                        "position_command": 2,
+                        "closed_position": 0,
+                        "open_position": 1000,
                     },
                     "control": {
                         "vel_scale": 1.,  # 0 ~ 1
                         "acc_scale": 10.,  # 0 ~ 10
-                        "move_vel_scale": 50.,  # 0 ~ 100
-                        "move_acc_scale": 50.  # 0 ~ 1000
+                        "move_vel_scale": 10.,  # 0 ~ 100
+                        "move_acc_scale": 10.  # 0 ~ 1000
                     },
                     "init_kwargs": {
                         # Uncomment to use force control (Check if your robot supports force control)
@@ -48,7 +72,7 @@ CONFIGS = {
             camera_config = CAMERA_CONFIG(
                 cam_params = {
                     "wrist": {
-                        "serial": "233522079515",
+                        "serial": "254622075364",
                         "enable_depth": False
                     },
                 }
@@ -59,7 +83,7 @@ CONFIGS = {
             data_config = DATA_CONFIG(
                 device_type = "vive",
                 device_params = {
-                    "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
+                    "calib_uvw": [1.5864221543618953, 0.02660983748319314, -2.028333652578424],
                 }
             ),
             # data_config = DATA_CONFIG(
@@ -84,17 +108,33 @@ CONFIGS = {
             
             # Check controller_utils.py for more details
             extra_config = EXTRA_CONFIG(
-                home_movement_fn = home_movement_w_open_gripper,
+                home_movement_fn = default_home_movement,
                 #control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 47.355045}, "y": {"min": -624.91986, "max": -544.72253}, "x": {"min": 243.68747, "max": 459.47855}})
-            )
+            ),
+            teleop_config = TELEOP_CONFIG(
+                arm_index = 1,  # 0: head, 1: left arm, 2: right arm
+                robot_control_mode = "joint_abs",
+                ik_type = "pink",  # "step" or "pink"
+                pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
+                # Used only for task_abs device -> Pink IK -> joint_abs robot.
+                # True locks every chain except the selected arm/head.
+                # STEP IK does not support locking, so this must then be False.
+                lock_non_selected_joints = True,
+                compliance = COMPLIANCE_CONFIG(
+                    enable = True,
+                    stiffness = [50] * 22,
+                ),
+            ),
         ),
         data_to_collect = {
             "proprio": ["q", "qdot", "p", "pdot"],
-            "gripper": ["gripper_position", "grasp_state"],
+            # "gripper": ["gripper_position", "grasp_state"],
             "camera": {
-                "wrist": ["rgb", "intrinsics", "depth"],
+                "wrist": ["rgb", "intrinsics"],
             },
-            "control": ["tele_abs_control", "gripper_command"]
+            # This must match teleop_config.robot_control_mode above.
+            "control": ["joint_abs_control"],
+            # "control": ["joint_abs_control", "gripper_command"]
             #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],
             #"force_gain": ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif"],
             #"force_mode": ["fm_enable", "fm_des_force", "fm_enabled_force"],

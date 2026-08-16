@@ -1,8 +1,6 @@
 from typing import List, Dict
 import time
 import numpy as np
-from threading import Thread
-from collections import deque
 import importlib
 
 from neuromeka import IndyDCP3 as RobotClient
@@ -13,6 +11,10 @@ from helper.extra_utils import ROBOT_CONTROL_MODE, ROBOT_STATE
 
 
 class Robot:
+    JOINT_DOF = 6
+    TASK_POSE_DOF = 6
+    VALID_ARM_INDICES = (0,)
+
     def __init__(self, robot_ip: str, gripper_config: Dict | None = None, **kwargs):
         self.robot_client = RobotClient(robot_ip=robot_ip)
         
@@ -70,6 +72,37 @@ class Robot:
     def set_direct_teaching(self, enable: bool):
         self.robot_client.set_direct_teaching(enable)
 
+    @staticmethod
+    def _validate_vector(value, expected_size: int, name: str) -> List[float]:
+        vector = np.asarray(value, dtype=np.float64)
+        if vector.ndim != 1 or vector.size != expected_size:
+            raise ValueError(
+                f"{name} must be a one-dimensional vector with exactly "
+                f"{expected_size} values; got shape {vector.shape}")
+        if not np.all(np.isfinite(vector)):
+            raise ValueError(f"{name} contains NaN or infinite values")
+        return vector.tolist()
+
+    def validate_joint_command(self, value) -> List[float]:
+        return self._validate_vector(value, self.JOINT_DOF, "joint command")
+
+    def make_joint_command_from_ik(
+            self, value, joint_reference=None,
+            arm_index: int = 0,
+            lock_non_selected_joints: bool = False) -> List[float]:
+        """Convert a kinematics result to the robot's command vector."""
+        return self.validate_joint_command(value)
+
+    def validate_task_command(self, value, arm_index: int = 0) -> List[float]:
+        if arm_index not in self.VALID_ARM_INDICES:
+            raise ValueError(
+                f"arm_index {arm_index} is not supported; expected one of "
+                f"{self.VALID_ARM_INDICES}")
+        return self._validate_vector(value, self.TASK_POSE_DOF, "task command")
+
+    def get_task_pose(self, state: Dict, arm_index: int = 0) -> List[float]:
+        return self.validate_task_command(state["p"], arm_index=arm_index)
+
     def move(self, 
              target_pos: List[float], 
              mode: str = "joint_abs", 
@@ -79,17 +112,22 @@ class Robot:
         assert mode in ["joint_abs", "task_abs"], f"Unsupported mode: {mode}"
 
         if mode == "joint_abs":
+            target_pos = self.validate_joint_command(target_pos)
             self.robot_client.movej(
                 jtarget=target_pos, 
                 vel_ratio=vel_ratio, 
                 acc_ratio=acc_ratio, 
                 blending_type=kwargs.get("blending_type", BlendingType.NONE))
         elif mode == "task_abs":
+            arm_index = kwargs.get("arm_index", 0)
+            target_pos = self.validate_task_command(
+                target_pos, arm_index=arm_index)
             self.robot_client.movel(
                 ttarget=target_pos,
                 vel_ratio=vel_ratio, 
                 acc_ratio=acc_ratio, 
-                blending_type=kwargs.get("blending_type", BlendingType.NONE))
+                blending_type=kwargs.get("blending_type", BlendingType.NONE),
+                arm_index=arm_index)
         else:
             raise NotImplementedError
 
@@ -107,39 +145,64 @@ class Robot:
         assert mode in ["joint_abs", "task_abs"], f"Unsupported mode: {mode}"
 
         if mode == "joint_abs":
+            action = self.validate_joint_command(action)
             self.robot_client.movetelej_abs(
                 jpos=action,
                 vel_ratio=vel_scale,
                 acc_ratio=acc_scale
             )
         elif mode == "task_abs":
+            arm_index = kwargs.get("arm_index", 0)
+            action = self.validate_task_command(action, arm_index=arm_index)
             self.robot_client.movetelel_abs(
                 tpos=action,
                 vel_ratio=vel_scale,
-                acc_ratio=acc_scale
+                acc_ratio=acc_scale,
+                arm_index=arm_index
             )
         else:
             raise NotImplementedError
          
-    def compute_forward_kinematics(self, jpos: List[float]):
-        fk_return = self.robot_client.forward_kin(jpos=jpos)
-        if fk_return["response"]["code"] == "0":
-            fk_return["success"] = True
-        else:
-            fk_return["tpos"] = self.get_state()["p"]  # Just return current p if FK fails
-            fk_return["success"] = False
-        del fk_return["response"]
-        return fk_return
+    @staticmethod
+    def _kinematics_result(result: Dict, output_key: str) -> Dict:
+        response = result.get("response", {})
+        output = {k: v for k, v in result.items() if k != "response"}
+        output["success"] = str(response.get("code")) == "0"
+        if not output["success"]:
+            output.pop(output_key, None)
+            output["error"] = response.get("msg", response)
+        return output
+
+    def compute_forward_kinematics(
+            self, jpos: List[float], arm_index: int = 0):
+        jpos = self.validate_joint_command(jpos)
+        self.validate_task_command([0.] * self.TASK_POSE_DOF, arm_index)
+        fk_return = self.robot_client.forward_kin(
+            jpos=jpos, arm_index=arm_index)
+        return self._kinematics_result(fk_return, "tpos")
     
-    def compute_inverse_kinematics(self, tpos: List[float], init_jpos: List[float]):
-        ik_return = self.robot_client.inverse_kin(tpos=tpos, init_jpos=init_jpos)
-        if ik_return["response"]["code"] == "0":
-            ik_return["success"] = True
-        else:
-            ik_return["jpos"] = self.get_state()["q"]  # Just return current q if IK fails
-            ik_return["success"] = False
-        del ik_return["response"]
-        return ik_return
+    def compute_inverse_kinematics(
+            self, tpos: List[float], init_jpos: List[float],
+            arm_index: int = 0):
+        tpos = self.validate_task_command(tpos, arm_index=arm_index)
+        init_jpos = self.validate_joint_command(init_jpos)
+        ik_return = self.robot_client.inverse_kin(
+            tpos=tpos, init_jpos=init_jpos, arm_index=arm_index)
+        return self._kinematics_result(ik_return, "jpos")
+
+    def set_compliance_mode(
+            self, enable: bool, stiffness: List[int] | None = None):
+        if stiffness is not None:
+            validated = self._validate_vector(
+                stiffness, self.JOINT_DOF, "compliance stiffness")
+            if any(value != round(value) for value in validated):
+                raise ValueError("compliance stiffness values must be integers")
+            stiffness = [int(value) for value in validated]
+        return self.robot_client.set_compliance_mode(
+            enable=enable, stiffness=stiffness)
+
+    def get_compliance_mode(self):
+        return self.robot_client.get_compliance_mode()
     
     def get_gripper_state(self):
         if self.gripper_client is None:
@@ -293,3 +356,9 @@ class RobotCluster:
         for robot_id, force_mode_dict in zip(robot_ids, force_mode_dicts):
             self.robots[robot_id].set_force_mode(force_mode_dict)
 
+    def set_compliance_mode(
+            self, robot_ids: List[int], enable: bool,
+            stiffness: List[int] | None = None):
+        for robot_id in robot_ids:
+            self.robots[robot_id].set_compliance_mode(
+                enable=enable, stiffness=stiffness)

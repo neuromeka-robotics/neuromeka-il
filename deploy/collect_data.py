@@ -32,8 +32,11 @@ if __name__ == "__main__":
     while True:
         char = getch.getch()
         if char == '1':
+            print("Moving to task home")
             data_collection_scheduler.exec_home_movement(wait=False)
         elif char == '2':
+            print("Data collecting from home pos")
             data_collection_scheduler.exec_collection(mode="start")
         elif char == '3':
+            print("Data collecting from current pos")
             data_collection_scheduler.exec_collection(mode="current")

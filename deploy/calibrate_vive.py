@@ -23,7 +23,6 @@ CUBOID_SIDE_MM = 100.0
 DEFAULT_CONTROL_DT = 0.05
 CALIBRATION_SPEED_MM_S = 50.0
 
-
 def generate_cuboid_waypoints(initial_pose, side_mm=300.):
     """
     Generate a fixed cuboid edge path from a start vertex.
@@ -166,22 +165,34 @@ def make_robot(config) -> tuple[Robot, dict]:
 
     robot_id = config.robot_config.robot_ids[0]
     robot_params = config.robot_config.robot_params[robot_id]
-    robot = Robot(
+    robot_class = robot_params.get(
+        "robot_class", config.robot_config.robot_class) or Robot
+    # Calibration does not operate the gripper, so do not activate it during a
+    # dry run or while executing the calibration path.
+    gripper_config = dict(robot_params.get("gripper", {"enable": False}))
+    gripper_config["enable"] = False
+    robot = robot_class(
         robot_ip=robot_params["ip"],
-        gripper_config=robot_params.get("gripper", None),
+        gripper_config=gripper_config,
         **robot_params.get("init_kwargs", {}),
     )
     return robot, robot_params
 
 
-def get_current_robot_pose(robot: Robot) -> np.ndarray:
-    current_pose = np.asarray(robot.get_state()["p"], dtype=np.float64)  # mm + deg
+def get_current_robot_pose(robot: Robot, arm_index: int) -> np.ndarray:
+    current_pose = np.asarray(
+        robot.get_task_pose(robot.get_state(), arm_index=arm_index),
+        dtype=np.float64)  # mm + deg
     print("Using current robot EE pose as cuboid start: %s" % np.array2string(current_pose, precision=3, separator=", "))
     return current_pose
 
 
-def collect_sample(robot: Robot, vive_device, target: np.ndarray) -> dict | None:
-    robot_pose = np.asarray(robot.get_state()["p"], dtype=np.float64)  # mm + deg
+def collect_sample(
+        robot: Robot, vive_device, target: np.ndarray,
+        arm_index: int) -> dict | None:
+    robot_pose = np.asarray(
+        robot.get_task_pose(robot.get_state(), arm_index=arm_index),
+        dtype=np.float64)  # mm + deg
     vive_pose = vive_device.get_pose_matrix()
     if vive_pose is None:
         return None
@@ -201,32 +212,51 @@ def execute_and_collect(
     vive_device,
     trajectory: np.ndarray,
     control_dt: float,
+    arm_index: int,
+    compliance,
 ) -> list[dict]:
     control_cfg = robot_params["control"]
     vel = control_cfg["vel_scale"]
     acc = control_cfg["acc_scale"]
     samples: list[dict] = []
-    last_target = trajectory[0]
+    compliance_requested = compliance.enable
+    try:
+        if compliance_requested:
+            robot.set_compliance_mode(
+                enable=True, stiffness=compliance.stiffness)
 
-    print("Starting task-absolute teleop...")
-    from helper.extra_utils import ROBOT_STATE
-    while robot.get_state()["op_state"] != ROBOT_STATE.TELE_OP:
-        robot.start_teleop(mode="task_abs")
-        time.sleep(0.2)
-    next_tick = time.monotonic()
-    for target in trajectory:
-        last_target = target
-        print(target.tolist())
-        robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
-        sample = collect_sample(robot, vive_device, target)
-        if sample is not None:
-            samples.append(sample)
+        print("Starting task-absolute teleop...")
+        from helper.extra_utils import ROBOT_STATE
+        teleop_deadline = time.monotonic() + 10.
+        while robot.get_state()["op_state"] != ROBOT_STATE.TELE_OP:
+            if time.monotonic() >= teleop_deadline:
+                raise RuntimeError(
+                    "Robot did not enter task-absolute teleoperation mode "
+                    "within 10 seconds")
+            robot.start_teleop(mode="task_abs")
+            time.sleep(0.2)
+        next_tick = time.monotonic()
+        for target in trajectory:
+            print(target.tolist())
+            robot.tele_move(
+                action=target.tolist(), mode="task_abs",
+                vel_scale=vel, acc_scale=acc, arm_index=arm_index)
+            sample = collect_sample(
+                robot, vive_device, target, arm_index=arm_index)
+            print(sample)
+            if sample is not None:
+                samples.append(sample)
 
-        next_tick += control_dt
-        wait_time = next_tick - time.monotonic()
-        if wait_time > 0:
-            time.sleep(wait_time)
-    robot.stop_teleop()
+            next_tick += control_dt
+            wait_time = next_tick - time.monotonic()
+            if wait_time > 0:
+                time.sleep(wait_time)
+    finally:
+        # Keep the same order as data collection: stop teleop first, then turn
+        # compliance off even if motion or VIVE sampling raises an exception.
+        robot.stop_teleop()
+        if compliance_requested:
+            robot.set_compliance_mode(enable=False)
     return samples
 
 
@@ -250,13 +280,15 @@ def print_result(R_RV: np.ndarray, diagnostics: dict) -> np.ndarray:
 def main() -> None:
     args = build_arg_parser().parse_args()
     config = load_config()
+    teleop_config = config.task_config.teleop_config
+    arm_index = teleop_config.arm_index
     control_dt = config.robot_config.control_dt if args.execute else DEFAULT_CONTROL_DT
     if not args.execute:
         print("Dry run: connecting to the robot only to read the current pose; no motion or VIVE access.")
         print("Using default preview control_dt=%.3f s." % control_dt)
 
     robot, robot_params = make_robot(config)
-    initial_pose = get_current_robot_pose(robot)
+    initial_pose = get_current_robot_pose(robot, arm_index=arm_index)
     waypoints = generate_cuboid_waypoints(initial_pose, side_mm=CUBOID_SIDE_MM)
     trajectory = interpolate_task_trajectory(waypoints, control_dt)
     preview_path(waypoints, trajectory, control_dt)
@@ -273,6 +305,8 @@ def main() -> None:
         vive_device=vive_device,
         trajectory=trajectory,
         control_dt=control_dt,
+        arm_index=arm_index,
+        compliance=teleop_config.compliance,
     )
     print("Collected valid paired samples: %d" % len(samples))
     if len(samples) < 3:

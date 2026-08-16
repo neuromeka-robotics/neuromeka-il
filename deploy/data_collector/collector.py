@@ -3,9 +3,14 @@ import os
 import h5py
 import json
 import cv2
+import select
+import sys
+import termios
 import time
 from threading import Thread
+from queue import Empty, Queue
 from typing import Dict
+import tty
 import numpy as np
 
 import matplotlib
@@ -17,6 +22,7 @@ from helper.extra_utils import ROBOT_STATE
 from helper.controller_utils import Controller
 from perception.realsense import RealsenseCamHandler
 from data_collector.device.base import BaseDevice
+from data_collector.control_adapter import convert_device_control
 import getch
 
 # communication
@@ -60,13 +66,30 @@ class DataCollectionScheduler(Controller):
             robot_config=self.robot_config,
             task_config=self.task_config,
             data_collector_config=self.config,
-            dagger_mode=kwargs.get("dagger_mode", False)
+            dagger_mode=kwargs.get("dagger_mode", False),
+            device=kwargs.get("device", None),
         )
-        self.control_mode = self.data_collector.get_control_mode()
+        self.device_output_mode = self.data_collector.get_control_mode()
+        self.control_mode = self.task_config.teleop_config.robot_control_mode
+        self.arm_index = self.task_config.teleop_config.arm_index
+        self.ik_type = self.task_config.teleop_config.ik_type
+        self.pink_solvers = {}
+        if (self.device_output_mode == "task_abs"
+                and self.control_mode == "joint_abs"
+                and self.ik_type == "pink"):
+            from data_collector.pink_ik import PinkTeleopIK
+
+            self.pink_solvers = {
+                robot_id: PinkTeleopIK(
+                    self.task_config.teleop_config.pink_config_path)
+                for robot_id in self.robot_ids
+            }
         
         # set empty variable
         self._collection_triggered = False
         self._collection_thread = None
+        self._final_button_queue = Queue()
+        self._collection_error = None
 
     def exec_collection(self, mode: str):
         if not self._collection_triggered:
@@ -74,12 +97,45 @@ class DataCollectionScheduler(Controller):
             if mode == "start":
                 # stop nn control + move to start joint position
                 self.exec_home_movement(wait=True)
-                
+
+            # Do not reuse an extra key press from an earlier collection.
+            while not self._final_button_queue.empty():
+                self._final_button_queue.get_nowait()
+
             self._collection_triggered = True
+            self._collection_error = None
             
             self._collection_thread = Thread(target=self._collection_fn, daemon=True)
             self._collection_thread.start()
-            self._collection_thread.join()
+            print("Press 't' to start/stop recording")
+
+            # Temporarily use keyboard input while the Vive buttons are unavailable.
+            stdin_fd = sys.stdin.fileno()
+            terminal_settings = termios.tcgetattr(stdin_fd)
+            try:
+                tty.setcbreak(stdin_fd)
+                while self._collection_thread.is_alive():
+                    readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if readable and getch.getch() == "t":
+                        self._final_button_queue.put(True)
+            finally:
+                termios.tcsetattr(
+                    stdin_fd, termios.TCSADRAIN, terminal_settings)
+                self._collection_thread.join()
+
+            if self._collection_error is not None:
+                print(
+                    "Collection failed; the partial episode will not be saved: "
+                    f"{self._collection_error}")
+                self.data_collector.init_data_buffer()
+                self._collection_triggered = False
+                return
+
+            if self.data_collector.traj_len == 0:
+                print("No samples were recorded; nothing to save.")
+                self.data_collector.init_data_buffer()
+                self._collection_triggered = False
+                return
             
             # save trajectory if it's OK
             print("Click 's' to save / Click 'e' to not save")
@@ -99,20 +155,24 @@ class DataCollectionScheduler(Controller):
                 
             self._collection_triggered = False
 
-    def collect_buffer(self):
+    def collect_buffer(self, robot_states=None):
         buffer_data = dict()
+        robot_states = robot_states or {
+            robot_id: self.robot[robot_id].get_state()
+            for robot_id in self.robot_ids
+        }
             
         # get proprioception
         for robot_id in self.robot_ids:
             if "proprio" in self.config.data_to_collect:
-                control_dat = self.robot[robot_id].get_state()
+                control_dat = robot_states[robot_id]
                 for k in self.config.data_to_collect["proprio"]:
                     buffer_data[f"{k}_{robot_id}"] = control_dat[k]
             if "gripper" in self.config.data_to_collect:
                 gripper_state = self.robot[robot_id].get_gripper_state()
-                if "gripper_position" in self.config.data_to_collect["proprio"]:
+                if "gripper_position" in self.config.data_to_collect["gripper"]:
                     buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
-                if "grasp_state" in self.config.data_to_collect["proprio"]:
+                if "grasp_state" in self.config.data_to_collect["gripper"]:
                     buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
             if "ft" in self.config.data_to_collect:
                 ft_data = self.robot[robot_id].get_transformed_ft_sensor_data()
@@ -150,87 +210,171 @@ class DataCollectionScheduler(Controller):
         return buffer_data
 
     def _collection_fn(self):
-        # pre execution
-        self.exec_start_movement()
+        movement_started = False
+        value = None
 
-        # initialize state variable
-        prev_button = False
-        is_recording = False
-        value = {robot_id: self.robot[robot_id].get_state()["p"] for robot_id in self.robot_ids}
+        try:
+            # Compliance must be active before the teleoperation protocol starts.
+            self.exec_enable_compliance()
+            self.exec_start_movement(control_mode=self.control_mode)
+            movement_started = True
 
-        # start
-        while self._collection_triggered:
-            control_start = time.time()
-            buffer_data = self.collect_buffer() 
-                    
-            # get device data
-            device_data = self.data_collector.get_device_input(
-                **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
-            
-            # device connection lost
-            if not device_data["final_valid"]:
-                print("Device input not valid or connection lost")
-                break
+            prev_button = False
+            is_recording = False
+            initial_states = {
+                robot_id: self.robot[robot_id].get_state()
+                for robot_id in self.robot_ids
+            }
+            if self.control_mode == "joint_abs":
+                value = {
+                    robot_id: self.robot[robot_id].validate_joint_command(
+                        initial_states[robot_id]["q"])
+                    for robot_id in self.robot_ids
+                }
+            else:
+                value = {
+                    robot_id: self.robot[robot_id].get_task_pose(
+                        initial_states[robot_id], arm_index=self.arm_index)
+                    for robot_id in self.robot_ids
+                }
 
-            # finish recording
-            if is_recording and (not prev_button) and device_data["final_button"]:
-                print("Recording stopped")
-                break
-            
-            # start recording
-            if (not prev_button) and device_data["final_button"]:
-                print("Recording started")
-                is_recording = True
+            while self._collection_triggered:
+                control_start = time.time()
+                robot_states = {
+                    robot_id: self.robot[robot_id].get_state()
+                    for robot_id in self.robot_ids
+                }
+                buffer_data = self.collect_buffer(robot_states=robot_states)
+                references = {
+                    robot_id: (
+                        self.robot[robot_id].get_task_pose(
+                            robot_states[robot_id], arm_index=self.arm_index)
+                        if self.device_output_mode == "task_abs"
+                        else self.robot[robot_id].validate_joint_command(
+                            robot_states[robot_id]["q"])
+                    )
+                    for robot_id in self.robot_ids
+                }
 
-                for robot_id in self.robot_ids:
-                    self.data_collector.device[robot_id].reset()
-                
                 device_data = self.data_collector.get_device_input(
-                    **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
-                
-            prev_button = device_data["final_button"]
-                
-            if is_recording:
-                # get robot control
-                value = {robot_id: self.task_config.extra_config.control_post_process_fn(device_data[robot_id]["control"]) \
-                    for robot_id in self.robot_ids}
-                
-                # get gripper control (BINARY)
-                gripper_command = {robot_id: (1. - np.round(device_data[robot_id]["trigger"])) for robot_id in self.robot_ids}
-                
-                # update buffer    
-                for robot_id in self.robot_ids:                    
-                    if "tele_abs_control" in self.config.data_to_collect["control"]:
-                        buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
-                    if "gripper_command" in self.config.data_to_collect["control"]:
-                        buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
+                    robot_references=references)
+
+                # Temporary keyboard replacement for the Vive final button.
+                try:
+                    device_data["final_button"] = (
+                        self._final_button_queue.get_nowait())
+                except Empty:
+                    device_data["final_button"] = False
+
+                if not device_data["final_valid"]:
+                    raise RuntimeError(
+                        "Device input is invalid or the connection was lost")
+
+                if (is_recording and not prev_button
+                        and device_data["final_button"]):
+                    print("Recording stopped")
+                    break
+
+                if not prev_button and device_data["final_button"]:
+                    print("Recording started")
+                    is_recording = True
+                    for robot_id in self.robot_ids:
+                        self.data_collector.device[robot_id].reset()
+                    device_data = self.data_collector.get_device_input(
+                        robot_references=references)
+                    if not device_data["final_valid"]:
+                        raise RuntimeError(
+                            "Device input became invalid after reset")
+
+                prev_button = device_data["final_button"]
+
+                if is_recording:
+                    converted = {}
+                    for robot_id in self.robot_ids:
+                        device_command = (
+                            self.task_config.extra_config
+                            .control_post_process_fn(
+                                device_data[robot_id]["control"]))
+                        converted[robot_id] = convert_device_control(
+                            robot=self.robot[robot_id],
+                            device_command=device_command,
+                            device_mode=self.device_output_mode,
+                            robot_mode=self.control_mode,
+                            current_state=robot_states[robot_id],
+                            arm_index=self.arm_index,
+                            ik_type=self.ik_type,
+                            lock_non_selected_joints=(
+                                self.task_config.teleop_config
+                                .lock_non_selected_joints),
+                            locked_joint_reference=(
+                                initial_states[robot_id]["q"]),
+                            pink_solver=self.pink_solvers.get(robot_id),
+                        )
+                    value = {
+                        robot_id: converted[robot_id].command
+                        for robot_id in self.robot_ids
+                    }
+                    gripper_command = {
+                        robot_id: float(
+                            1. - np.round(device_data[robot_id]["trigger"]))
+                        for robot_id in self.robot_ids
+                    }
+
+                    # Send only commands that passed full dimensional validation.
+                    self.robot_cluster.tele_move(
+                        action=value,
+                        mode=self.control_mode,
+                        vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
+                        acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
+                        arm_index=self.arm_index,
+                    )
+                    self.robot_cluster.move_gripper(
+                        mode="thread", value=gripper_command)
+
+                    # Store the converted command actually sent to the robot.
+                    control_key = f"{self.control_mode}_control"
+                    configured_controls = self.config.data_to_collect["control"]
+                    for robot_id in self.robot_ids:
+                        if control_key in configured_controls:
+                            buffer_data[f"{control_key}_{robot_id}"] = value[robot_id]
+                        if "gripper_command" in configured_controls:
+                            buffer_data[f"gripper_command_{robot_id}"] = (
+                                gripper_command[robot_id])
                     self.data_collector.update_data_buffer(**buffer_data)
 
-                # execute control to robot
-                self.robot_cluster.tele_move(
-                    action=value,
-                    mode=self.control_mode,
-                    vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
-                    acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
-                )
-                
-                # execute control to gripper
-                self.robot_cluster.move_gripper(mode="thread", value=gripper_command)
-                
-                # sync control frequency
-                control_end = time.time()
-                wait_time = self.robot_config.control_dt - (control_end - control_start)
-                if wait_time > 0.:
-                    time.sleep(wait_time)
-                    
-        # soft stop
-        self.exec_soft_stop(
-            last_action=value,
-            control_period=self.robot_config.control_dt,
-            mode=self.control_mode)
-        
-        # post execution
-        self.exec_finish_movement()
+                    wait_time = self.robot_config.control_dt - (
+                        time.time() - control_start)
+                    if wait_time > 0.:
+                        time.sleep(wait_time)
+
+        except Exception as exc:
+            self._collection_error = exc
+        finally:
+            if movement_started and value is not None:
+                try:
+                    self.exec_soft_stop(
+                        last_action=value,
+                        control_period=self.robot_config.control_dt,
+                        mode=self.control_mode,
+                        arm_index=self.arm_index,
+                    )
+                except Exception as exc:
+                    if self._collection_error is None:
+                        self._collection_error = exc
+            try:
+                self.exec_finish_movement()
+            except Exception as exc:
+                if self._collection_error is None:
+                    self._collection_error = exc
+            finally:
+                try:
+                    # Teleop is stopped before compliance is deactivated.
+                    # self.exec_disable_compliance()
+                    pass
+                except Exception as exc:
+                    if self._collection_error is None:
+                        self._collection_error = exc
+                self._collection_triggered = False
         
 
 class TeleopDataCollector:
@@ -249,7 +393,15 @@ class TeleopDataCollector:
         self.device: Dict[int, BaseDevice] = dict()
         if device is None:
             for robot_id in self.robot_ids:
-                if self.task_config.data_config.device_type == "vive":
+                device_class = self.task_config.data_config.device_class
+                if device_class is not None:
+                    if not issubclass(device_class, BaseDevice):
+                        raise TypeError("device_class must inherit BaseDevice")
+                    self.device[robot_id] = device_class(
+                        device_params=self.task_config.data_config.device_params,
+                        control_dt=self.robot_config.control_dt,
+                    )
+                elif self.task_config.data_config.device_type == "vive":
                     from data_collector.device.vive import Vive
                     self.device[robot_id] = Vive(
                         device_params=self.task_config.data_config.device_params,
@@ -316,32 +468,45 @@ class TeleopDataCollector:
         for robot_id in self.robot_ids:
             self.device[robot_id].exit()
             
-    def get_device_input(self, **kwargs):
+    def get_device_input(self, robot_references):
         output = dict()
         output["final_button"] = False
         output["final_valid"] = True
         
         for robot_id in self.robot_ids:
-            output[robot_id] = self.device[robot_id].get_input(robot_pose=kwargs[f"p_{robot_id}"])
-            output["final_button"] = output["final_button"] or output[robot_id]["button"]
+            reference = robot_references[robot_id]
+            output[robot_id] = self.device[robot_id].get_input(
+                robot_pose=reference,
+                robot_joint=reference,
+            )
+            # Temporary: ignore the Vive button as the final button.
+            # output["final_button"] = output["final_button"] or output[robot_id]["button"]
             output["final_valid"] = output["final_valid"] and output[robot_id]["valid"]
         return output
     
     def get_control_mode(self):
         from helper.extra_utils import ROBOT_CONTROL_MODE
-        
-        control_mode = self.device[self.robot_ids[0]].CONTROL_MODE
+
+        device_modes = {
+            self.device[robot_id].CONTROL_MODE
+            for robot_id in self.robot_ids
+        }
+        if len(device_modes) != 1:
+            raise ValueError(
+                "All teleoperation devices must use the same output mode")
+        control_mode = device_modes.pop()
         if control_mode == ROBOT_CONTROL_MODE.TELE_JOINT_ABSOLUTE:
             return "joint_abs"
-        else:
+        if control_mode == ROBOT_CONTROL_MODE.TELE_TASK_ABSOLUTE:
             return "task_abs"
-            
+        raise ValueError(f"Unsupported device control mode: {control_mode}")
+
     def init_data_buffer(self):
         """
         "q", "qdot", "p", "pdot",   # robot state (T, D)
         "gripper_position", "grasp_state",   # gripper state  (T, 1)
         "images.rgb.{cam_name}", "images.depth.{cam_name}", "images.intrinsics.{cam_name}",  # rgb (T, H, W, C) [rgb], depth (T, H, W) [float32], intrinsics (3, 3) [float32]
-        "tele_abs_control"   # robot control  (T, 6)
+        "task_abs_control" or "joint_abs_control"  # sent robot control (T, D)
         "gripper_command",   # gripper control (T, 1)
         """
         # Reset data
@@ -351,7 +516,8 @@ class TeleopDataCollector:
             if k == "camera":
                 continue
             else:
-                data_to_collect.extend(self.data_collector_config.data_to_collect[k])
+                data_to_collect.extend(
+                    self.data_collector_config.data_to_collect[k])
         for type in data_to_collect:
             for robot_id in self.robot_ids:
                 self.data_types.append(f"{type}_{robot_id}")

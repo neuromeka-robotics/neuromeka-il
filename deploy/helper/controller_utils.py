@@ -30,10 +30,16 @@ class Controller:
                 assert isinstance(self.robot[robot_id], Robot), f"Wrong robot instance for id {robot_id}"
         else:
             for robot_id in self.robot_ids:
-                self.robot[robot_id] = Robot(
-                    robot_ip=self.robot_config.robot_params[robot_id]["ip"], 
-                    gripper_config=self.robot_config.robot_params[robot_id].get("gripper", None),
-                    **self.robot_config.robot_params[robot_id].get("init_kwargs", {})
+                robot_params = self.robot_config.robot_params[robot_id]
+                robot_class = robot_params.get(
+                    "robot_class", self.robot_config.robot_class) or Robot
+                if not issubclass(robot_class, Robot):
+                    raise TypeError(
+                        f"robot_class for robot {robot_id} must inherit Robot")
+                self.robot[robot_id] = robot_class(
+                    robot_ip=robot_params["ip"],
+                    gripper_config=robot_params.get("gripper", None),
+                    **robot_params.get("init_kwargs", {})
                 )
                 
         self.robot_cluster = RobotCluster(robots=self.robot)
@@ -45,17 +51,34 @@ class Controller:
         #############################################################
         self.task_config.extra_config.home_movement_fn(self, wait)
         
-    def exec_start_movement(self):
+    def exec_start_movement(self, **kwargs):
         #######################################################################
         # Define process to run BEFORE main controller execution in config.py #
         #######################################################################
-        self.task_config.extra_config.start_movement_fn(self)
+        self.task_config.extra_config.start_movement_fn(self, **kwargs)
         
-    def exec_finish_movement(self):
+    def exec_finish_movement(self, **kwargs):
         ######################################################################
         # Define process to run AFTER main controller execution in config.py #
         ######################################################################
-        self.task_config.extra_config.finish_movement_fn(self)
+        self.task_config.extra_config.finish_movement_fn(self, **kwargs)
+
+    def exec_enable_compliance(self):
+        compliance = self.task_config.teleop_config.compliance
+        if compliance.enable:
+            for robot_id in self.robot_ids:
+                self.set_compliance(
+                    robot_id,
+                    enable=True,
+                    stiffness=compliance.stiffness,
+                )
+
+    def exec_disable_compliance(self):
+        compliance = self.task_config.teleop_config.compliance
+        if compliance.enable:
+            for robot_id in self.robot_ids:
+                self.set_compliance(
+                    robot_id, enable=False, stiffness=None)
 
     def exec_home_pos(self, wait=False):
         for robot_id in self.robot_ids:
@@ -119,7 +142,8 @@ class Controller:
     def exec_soft_stop(self, 
                        last_action: Dict[int, List[float]], 
                        control_period: float, 
-                       mode: str = "task_abs"):
+                       mode: str = "task_abs",
+                       arm_index: int | None = None):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
 
         soft_stop_start = time.time()
@@ -132,6 +156,9 @@ class Controller:
                 mode=mode,
                 vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
                 acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
+                arm_index=(
+                    self.task_config.teleop_config.arm_index
+                    if arm_index is None else arm_index)
             )
 
             soft_stop_control_end = time.time()
@@ -149,11 +176,49 @@ class Controller:
         while time.time() - start_time < time_limit:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if robot_state == ROBOT_STATE.TELE_OP:
-                break
+                return
             else:
                 self.robot[robot_id].stop_teleop()
                 self.robot[robot_id].start_teleop(mode=mode)
                 time.sleep(0.2)
+        raise RuntimeError(
+            f"Robot {robot_id} did not enter teleoperation mode within "
+            f"{time_limit:.1f} seconds")
+
+    def set_compliance(
+            self, robot_id: int, enable: bool,
+            stiffness: List[int] | None = None):
+        assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
+
+        time_limit = 10.  # sec
+        start_time = time.time()
+        last_error = None
+
+        while time.time() - start_time < time_limit:
+            try:
+                compliance_state = self.robot[robot_id].get_compliance_mode()
+                if bool(compliance_state["enable"]) == enable:
+                    return
+            except Exception as exc:
+                last_error = exc
+
+            try:
+                self.robot[robot_id].set_compliance_mode(
+                    enable=enable, stiffness=stiffness)
+            except Exception as exc:
+                # STEP may apply the transition and close the socket before
+                # returning. Confirm the state on the next loop iteration.
+                last_error = exc
+            time.sleep(0.2)
+
+        message = (
+            f"Robot {robot_id} did not "
+            f"{'enter' if enable else 'leave'} compliance mode within "
+            f"{time_limit:.1f} seconds")
+        if last_error is None:
+            raise RuntimeError(message)
+        raise RuntimeError(f"{message}; last RPC error: {last_error}") \
+            from last_error
 
     def set_no_teleop(self, robot_id: int):
         assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"
@@ -164,10 +229,13 @@ class Controller:
         while time.time() - start_time < time_limit:
             robot_state = self.robot[robot_id].get_state()["op_state"]
             if robot_state == ROBOT_STATE.IDLE:
-                break
+                return
             else:
                 self.robot[robot_id].stop_teleop()
                 time.sleep(0.2)
+        raise RuntimeError(
+            f"Robot {robot_id} did not leave teleoperation mode within "
+            f"{time_limit:.1f} seconds")
 
     def set_recovery(self, robot_id: int):
         assert robot_id in self.robot_ids, f"Unavailable robot ID {robot_id}"

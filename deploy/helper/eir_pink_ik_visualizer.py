@@ -110,20 +110,6 @@ def _load_eir_settings(config_path: Path) -> dict[str, Any]:
         "visual_urdf_path": visual_urdf_path,
         "joint_names": joint_names,
         "default_pose": {name: float(default_pose[name]) for name in joint_names},
-        "tcp": {
-            side: {
-                "parent_frame": str(values["tcp"][side]["parent_frame"]),
-                "xyz": tuple(
-                    float(value)
-                    for value in values["tcp"][side]["step_tcp"]["xyz"]
-                ),
-                "rpy": tuple(
-                    float(value)
-                    for value in values["tcp"][side]["step_tcp"]["rpy"]
-                ),
-            }
-            for side in ARM_SIDES
-        },
         "ik": values["ik"],
     }
 
@@ -220,7 +206,6 @@ class EIRPinkIKVisualizer:
             URDF,
         ) = dependencies
         self._joint_names = settings["joint_names"]
-        self._tcp_settings = settings["tcp"]
         self._ik = settings["ik"]
         self._state_lock = threading.Lock()
         self._revision = 0
@@ -230,7 +215,7 @@ class EIRPinkIKVisualizer:
             str(settings["kinematics_urdf_path"])
         )
         self._validate_model()
-        self._tcp_frames = self._add_tcp_frames()
+        self._tcp_frames = self._tcp_frames_from_urdf()
         self._full_q = self._configuration_from_joint_values(
             self._full_model, initial_joint_values
         )
@@ -328,39 +313,11 @@ class EIRPinkIKVisualizer:
             joint = self._full_model.joints[joint_id]
             if joint.nq != 1 or joint.nv != 1:
                 raise ValueError(f"EIR joint {joint_name!r} must have one DoF")
-        for tcp_settings in self._tcp_settings.values():
-            parent_frame = tcp_settings["parent_frame"]
-            if self._full_model.getFrameId(parent_frame) >= self._full_model.nframes:
-                raise ValueError(f"EIR URDF has no frame named {parent_frame!r}")
-
-    def _add_tcp_frames(self) -> dict[str, str]:
-        frame_names = {}
-        for side, tcp_settings in self._tcp_settings.items():
-            parent_frame_id = self._full_model.getFrameId(
-                tcp_settings["parent_frame"]
-            )
-            parent_frame = self._full_model.frames[parent_frame_id]
-            offset = self._pin.SE3(
-                self._rotation.from_euler(
-                    "xyz", tcp_settings["rpy"], degrees=False
-                ).as_matrix(),
-                np.asarray(tcp_settings["xyz"], dtype=np.float64),
-            )
-            frame_name = f"eir_{side}_tcp"
-            parent_joint_id = (
-                parent_frame.parentJoint
-                if hasattr(parent_frame, "parentJoint")
-                else parent_frame.parent
-            )
-            frame = self._pin.Frame(
-                frame_name,
-                parent_joint_id,
-                parent_frame_id,
-                parent_frame.placement * offset,
-                self._pin.FrameType.OP_FRAME,
-            )
-            self._full_model.addFrame(frame)
-            frame_names[side] = frame_name
+    def _tcp_frames_from_urdf(self) -> dict[str, str]:
+        frame_names = {side: f"{side}_tcp" for side in ARM_SIDES}
+        for frame_name in frame_names.values():
+            if self._full_model.getFrameId(frame_name) >= self._full_model.nframes:
+                raise ValueError(f"EIR URDF has no TCP frame {frame_name!r}")
         return frame_names
 
     def _configuration_from_joint_values(

@@ -104,8 +104,8 @@ class PinkTeleopIK:
         self._validate_model()
         self._task_frames = {
             0: "head_yaw",
-            1: self._add_step_tcp_frame("left", values["tcp"]["left"]),
-            2: self._add_step_tcp_frame("right", values["tcp"]["right"]),
+            1: "left_tcp",
+            2: "right_tcp",
         }
 
     def _validate_model(self) -> None:
@@ -121,45 +121,9 @@ class PinkTeleopIK:
                     f"Pink IK joint {joint_name!r} must have one DoF")
         if self._full_model.getFrameId("head_yaw") >= self._full_model.nframes:
             raise ValueError("Pink IK URDF has no 'head_yaw' frame")
-
-    def _add_step_tcp_frame(self, side: str, settings: dict) -> str:
-        parent_frame_name = str(settings["parent_frame"])
-        parent_frame_id = self._full_model.getFrameId(parent_frame_name)
-        if parent_frame_id >= self._full_model.nframes:
-            raise ValueError(
-                f"Pink IK URDF has no frame named {parent_frame_name!r}")
-        try:
-            offset_settings = settings["step_tcp"]
-        except KeyError as exc:
-            raise ValueError(
-                f"Pink IK config is missing tcp.{side}.step_tcp") from exc
-
-        xyz = np.asarray(offset_settings["xyz"], dtype=np.float64)
-        rpy = np.asarray(offset_settings["rpy"], dtype=np.float64)
-        if xyz.shape != (3,) or rpy.shape != (3,):
-            raise ValueError(
-                f"Pink IK tcp.{side}.step_tcp must define 3D xyz/rpy")
-        if not np.all(np.isfinite(xyz)) or not np.all(np.isfinite(rpy)):
-            raise ValueError(
-                f"Pink IK tcp.{side}.step_tcp contains non-finite values")
-
-        parent_frame = self._full_model.frames[parent_frame_id]
-        parent_joint_id = (
-            parent_frame.parentJoint
-            if hasattr(parent_frame, "parentJoint")
-            else parent_frame.parent
-        )
-        offset = self._pin.SE3(
-            self._rotation.from_euler("xyz", rpy).as_matrix(), xyz)
-        frame_name = f"step_{side}_tcp"
-        self._full_model.addFrame(self._pin.Frame(
-            frame_name,
-            parent_joint_id,
-            parent_frame_id,
-            parent_frame.placement * offset,
-            self._pin.FrameType.OP_FRAME,
-        ))
-        return frame_name
+        for frame_name in ("left_tcp", "right_tcp"):
+            if self._full_model.getFrameId(frame_name) >= self._full_model.nframes:
+                raise ValueError(f"Pink IK URDF has no TCP frame {frame_name!r}")
 
     @staticmethod
     def _validate_vector(value: Any, size: int, name: str) -> np.ndarray:

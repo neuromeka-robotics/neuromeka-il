@@ -71,7 +71,26 @@ class DataCollectionScheduler(Controller):
         )
         self.device_output_mode = self.data_collector.get_control_mode()
         self.control_mode = self.task_config.teleop_config.robot_control_mode
-        self.arm_index = self.task_config.teleop_config.arm_index
+        raw_arm_index = self.task_config.teleop_config.arm_index
+        if isinstance(raw_arm_index, int):
+            self.arm_index = {robot_id: raw_arm_index for robot_id in self.robot_ids}
+            self.is_multi_arm = False
+        elif isinstance(raw_arm_index, list):
+            if len(self.robot_ids) > 1:
+                raise ValueError(
+                    "List[int] arm_index is only supported for single-robot "
+                    "dual-arm teleop. Use Dict[int, int] for multi-robot setups.")
+            if (self.task_config.teleop_config.robot_control_mode == "joint_abs"
+                    and self.task_config.teleop_config.ik_type == "step"):
+                raise ValueError(
+                    "Dual-arm teleop on a single robot with joint_abs mode "
+                    "requires Pink IK. STEP IK does not support simultaneous "
+                    "multi-arm solving.")
+            self.arm_index = raw_arm_index
+            self.is_multi_arm = True
+        else:
+            self.arm_index = raw_arm_index
+            self.is_multi_arm = False
         self.ik_type = self.task_config.teleop_config.ik_type
         self.pink_solvers = {}
         if (self.device_output_mode == "task_abs"
@@ -225,6 +244,13 @@ class DataCollectionScheduler(Controller):
                 robot_id: self.robot[robot_id].get_state()
                 for robot_id in self.robot_ids
             }
+            last_per_arm_commands = {}
+            if self.is_multi_arm and self.control_mode == "task_abs":
+                rid = self.robot_ids[0]
+                for arm_idx in self.arm_index:
+                    last_per_arm_commands[arm_idx] = (
+                        self.robot[rid].get_task_pose(
+                            initial_states[rid], arm_index=arm_idx))
             if self.control_mode == "joint_abs":
                 value = {
                     robot_id: self.robot[robot_id].validate_joint_command(
@@ -232,11 +258,17 @@ class DataCollectionScheduler(Controller):
                     for robot_id in self.robot_ids
                 }
             else:
-                value = {
-                    robot_id: self.robot[robot_id].get_task_pose(
-                        initial_states[robot_id], arm_index=self.arm_index)
-                    for robot_id in self.robot_ids
-                }
+                if self.is_multi_arm:
+                    value = {
+                        self.robot_ids[0]: self.robot[self.robot_ids[0]].get_task_pose(
+                            initial_states[self.robot_ids[0]], arm_index=self.arm_index[0])
+                    }
+                else:
+                    value = {
+                        robot_id: self.robot[robot_id].get_task_pose(
+                            initial_states[robot_id], arm_index=self.arm_index[robot_id])
+                        for robot_id in self.robot_ids
+                    }
 
             while self._collection_triggered:
                 control_start = time.time()
@@ -245,16 +277,28 @@ class DataCollectionScheduler(Controller):
                     for robot_id in self.robot_ids
                 }
                 buffer_data = self.collect_buffer(robot_states=robot_states)
-                references = {
-                    robot_id: (
-                        self.robot[robot_id].get_task_pose(
-                            robot_states[robot_id], arm_index=self.arm_index)
-                        if self.device_output_mode == "task_abs"
-                        else self.robot[robot_id].validate_joint_command(
-                            robot_states[robot_id]["q"])
-                    )
-                    for robot_id in self.robot_ids
-                }
+                if self.is_multi_arm:
+                    references = {
+                        i: (
+                            self.robot[self.robot_ids[0]].get_task_pose(
+                                robot_states[self.robot_ids[0]], arm_index=self.arm_index[i])
+                            if self.device_output_mode == "task_abs"
+                            else self.robot[self.robot_ids[0]].validate_joint_command(
+                                robot_states[self.robot_ids[0]]["q"])
+                        )
+                        for i in range(len(self.arm_index))
+                    }
+                else:
+                    references = {
+                        robot_id: (
+                            self.robot[robot_id].get_task_pose(
+                                robot_states[robot_id], arm_index=self.arm_index[robot_id])
+                            if self.device_output_mode == "task_abs"
+                            else self.robot[robot_id].validate_joint_command(
+                                robot_states[robot_id]["q"])
+                        )
+                        for robot_id in self.robot_ids
+                    }
 
                 device_data = self.data_collector.get_device_input(
                     robot_references=references)
@@ -278,8 +322,8 @@ class DataCollectionScheduler(Controller):
                 if not prev_button and device_data["final_button"]:
                     print("Recording started")
                     is_recording = True
-                    for robot_id in self.robot_ids:
-                        self.data_collector.device[robot_id].reset()
+                    for dev_id in self.data_collector.device_ids:
+                        self.data_collector.device[dev_id].reset()
                     device_data = self.data_collector.get_device_input(
                         robot_references=references)
                     if not device_data["final_valid"]:
@@ -289,58 +333,170 @@ class DataCollectionScheduler(Controller):
                 prev_button = device_data["final_button"]
 
                 if is_recording:
-                    converted = {}
-                    for robot_id in self.robot_ids:
-                        device_command = (
-                            self.task_config.extra_config
-                            .control_post_process_fn(
-                                device_data[robot_id]["control"]))
-                        converted[robot_id] = convert_device_control(
-                            robot=self.robot[robot_id],
-                            device_command=device_command,
-                            device_mode=self.device_output_mode,
-                            robot_mode=self.control_mode,
-                            current_state=robot_states[robot_id],
-                            arm_index=self.arm_index,
-                            ik_type=self.ik_type,
-                            lock_non_selected_joints=(
-                                self.task_config.teleop_config
-                                .lock_non_selected_joints),
-                            locked_joint_reference=(
-                                initial_states[robot_id]["q"]),
-                            pink_solver=self.pink_solvers.get(robot_id),
-                        )
-                    value = {
-                        robot_id: converted[robot_id].command
-                        for robot_id in self.robot_ids
-                    }
-                    gripper_command = {
-                        robot_id: float(
-                            1. - np.round(device_data[robot_id]["trigger"]))
-                        for robot_id in self.robot_ids
-                    }
+                    if self.is_multi_arm:
+                        rid = self.robot_ids[0]
+                        if self.control_mode == "joint_abs":
+                            # Single Pink solve for all arms simultaneously.
+                            targets = {}
+                            for i, arm_idx in enumerate(self.arm_index):
+                                device_command = (
+                                    self.task_config.extra_config
+                                    .control_post_process_fn(
+                                        device_data[i]["control"]))
+                                task_cmd = self.robot[rid].validate_task_command(
+                                    device_command, arm_index=arm_idx)
+                                targets[arm_idx] = task_cmd
 
-                    # Send only commands that passed full dimensional validation.
-                    self.robot_cluster.tele_move(
-                        action=value,
-                        mode=self.control_mode,
-                        vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
-                        acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
-                        arm_index=self.arm_index,
-                    )
-                    self.robot_cluster.move_gripper(
-                        mode="thread", value=gripper_command)
+                            result = self.pink_solvers[rid].solve_multi(
+                                targets=targets,
+                                init_jpos=robot_states[rid]["q"],
+                                lock_non_selected_joints=(
+                                    self.task_config.teleop_config
+                                    .lock_non_selected_joints),
+                            )
+                            if not result.get("success", False):
+                                error = result.get(
+                                    "error", "unknown controller error")
+                                arm_str = ", ".join(
+                                    str(a) for a in targets.keys())
+                                raise RuntimeError(
+                                    f"Pink IK failed for arms [{arm_str}]: "
+                                    f"{error}")
 
-                    # Store the converted command actually sent to the robot.
-                    control_key = f"{self.control_mode}_control"
-                    configured_controls = self.config.data_to_collect["control"]
-                    for robot_id in self.robot_ids:
+                            q18 = result["jpos"]
+                            dummy_dof = getattr(
+                                self.robot[rid], 'DUMMY_JOINT_DOF', 0)
+                            q_full = q18 + [0.] * dummy_dof
+                            value = {
+                                rid: self.robot[rid].validate_joint_command(
+                                    q_full)}
+                            gripper_command_val = float(
+                                1. - np.round(device_data[0]["trigger"]))
+                            # self.robot[rid].tele_move(
+                            #     action=value[rid],
+                            #     mode="joint_abs",
+                            #     vel_scale=self.robot_config.robot_params[
+                            #         rid]["control"]["vel_scale"],
+                            #     acc_scale=self.robot_config.robot_params[
+                            #         rid]["control"]["acc_scale"],
+                            # )
+                            self.robot[rid].move_gripper(
+                                mode="thread", value=gripper_command_val)
+                            gripper_command = {rid: gripper_command_val}
+                        else:
+                            # task_abs: send separate tele_move per arm
+                            for i, arm_idx in enumerate(self.arm_index):
+                                device_command = (
+                                    self.task_config.extra_config
+                                    .control_post_process_fn(
+                                        device_data[i]["control"]))
+                                converted = convert_device_control(
+                                    robot=self.robot[rid],
+                                    device_command=device_command,
+                                    device_mode=self.device_output_mode,
+                                    robot_mode=self.control_mode,
+                                    current_state=robot_states[rid],
+                                    arm_index=arm_idx,
+                                    ik_type=self.ik_type,
+                                    lock_non_selected_joints=(
+                                        self.task_config.teleop_config
+                                        .lock_non_selected_joints),
+                                    locked_joint_reference=(
+                                        initial_states[rid]["q"]),
+                                    pink_solver=self.pink_solvers.get(rid),
+                                )
+                                last_per_arm_commands[arm_idx] = (
+                                    converted.command)
+                                # self.robot[rid].tele_move(
+                                #     action=converted.command,
+                                #     mode="task_abs",
+                                #     vel_scale=self.robot_config.robot_params[
+                                #         rid]["control"]["vel_scale"],
+                                #     acc_scale=self.robot_config.robot_params[
+                                #         rid]["control"]["acc_scale"],
+                                #     arm_index=arm_idx,
+                                # )
+                            value = {
+                                rid: last_per_arm_commands[
+                                    self.arm_index[0]]}
+                            gripper_command_val = float(
+                                1. - np.round(device_data[0]["trigger"]))
+                            self.robot[rid].move_gripper(
+                                mode="thread", value=gripper_command_val)
+                            gripper_command = {rid: gripper_command_val}
+
+                        control_key = f"{self.control_mode}_control"
+                        configured_controls = self.config.data_to_collect[
+                            "control"]
                         if control_key in configured_controls:
-                            buffer_data[f"{control_key}_{robot_id}"] = value[robot_id]
+                            buffer_data[f"{control_key}_{rid}"] = value[rid]
                         if "gripper_command" in configured_controls:
-                            buffer_data[f"gripper_command_{robot_id}"] = (
-                                gripper_command[robot_id])
-                    self.data_collector.update_data_buffer(**buffer_data)
+                            buffer_data[f"gripper_command_{rid}"] = (
+                                gripper_command[rid])
+                        self.data_collector.update_data_buffer(**buffer_data)
+                    else:
+                        converted = {}
+                        for robot_id in self.robot_ids:
+                            device_command = (
+                                self.task_config.extra_config
+                                .control_post_process_fn(
+                                    device_data[robot_id]["control"]))
+                            converted[robot_id] = convert_device_control(
+                                robot=self.robot[robot_id],
+                                device_command=device_command,
+                                device_mode=self.device_output_mode,
+                                robot_mode=self.control_mode,
+                                current_state=robot_states[robot_id],
+                                arm_index=self.arm_index[robot_id],
+                                ik_type=self.ik_type,
+                                lock_non_selected_joints=(
+                                    self.task_config.teleop_config
+                                    .lock_non_selected_joints),
+                                locked_joint_reference=(
+                                    initial_states[robot_id]["q"]),
+                                pink_solver=self.pink_solvers.get(robot_id),
+                            )
+                        value = {
+                            robot_id: converted[robot_id].command
+                            for robot_id in self.robot_ids
+                        }
+                        gripper_command = {
+                            robot_id: float(
+                                1. - np.round(
+                                    device_data[robot_id]["trigger"]))
+                            for robot_id in self.robot_ids
+                        }
+
+                        # Send only commands that passed full dimensional
+                        # validation.
+                        # self.robot_cluster.tele_move(
+                        #     action=value,
+                        #     mode=self.control_mode,
+                        #     vel_scale={
+                        #         robot_id: self.robot_config.robot_params[
+                        #             robot_id]["control"]["vel_scale"]
+                        #         for robot_id in self.robot_config.robot_ids},
+                        #     acc_scale={
+                        #         robot_id: self.robot_config.robot_params[
+                        #             robot_id]["control"]["acc_scale"]
+                        #         for robot_id in self.robot_config.robot_ids},
+                        #     arm_index=self.arm_index,
+                        # )
+                        self.robot_cluster.move_gripper(
+                            mode="thread", value=gripper_command)
+
+                        # Store the converted command actually sent to the robot.
+                        control_key = f"{self.control_mode}_control"
+                        configured_controls = self.config.data_to_collect[
+                            "control"]
+                        for robot_id in self.robot_ids:
+                            if control_key in configured_controls:
+                                buffer_data[f"{control_key}_{robot_id}"] = \
+                                    value[robot_id]
+                            if "gripper_command" in configured_controls:
+                                buffer_data[f"gripper_command_{robot_id}"] = (
+                                    gripper_command[robot_id])
+                        self.data_collector.update_data_buffer(**buffer_data)
 
                     wait_time = self.robot_config.control_dt - (
                         time.time() - control_start)
@@ -352,12 +508,36 @@ class DataCollectionScheduler(Controller):
         finally:
             if movement_started and value is not None:
                 try:
-                    self.exec_soft_stop(
-                        last_action=value,
-                        control_period=self.robot_config.control_dt,
-                        mode=self.control_mode,
-                        arm_index=self.arm_index,
-                    )
+                    if self.is_multi_arm and self.control_mode == "task_abs":
+                        rid = self.robot_ids[0]
+                        soft_stop_start = time.time()
+                        while time.time() - soft_stop_start < 0.2:
+                            soft_stop_control_start = time.time()
+                            # for arm_idx in self.arm_index:
+                            #     self.robot[rid].tele_move(
+                            #         action=last_per_arm_commands.get(
+                            #             arm_idx, value[rid]),
+                            #         mode="task_abs",
+                            #         vel_scale=self.robot_config.robot_params[
+                            #             rid]["control"]["vel_scale"],
+                            #         acc_scale=self.robot_config.robot_params[
+                            #             rid]["control"]["acc_scale"],
+                            #         arm_index=arm_idx,
+                            #     )
+                            wait_time = self.robot_config.control_dt - (
+                                time.time() - soft_stop_control_start)
+                            if wait_time > 0.:
+                                time.sleep(wait_time)
+                    else:
+                        soft_stop_arm_index = (
+                            self.arm_index if not self.is_multi_arm
+                            else self.arm_index[0])
+                        self.exec_soft_stop(
+                            last_action=value,
+                            control_period=self.robot_config.control_dt,
+                            mode=self.control_mode,
+                            arm_index=soft_stop_arm_index,
+                        )
                 except Exception as exc:
                     if self._collection_error is None:
                         self._collection_error = exc
@@ -390,25 +570,31 @@ class TeleopDataCollector:
         self.task_name = task_config.name
         self.data_collector_config = data_collector_config
         
+        arm_index = self.task_config.teleop_config.arm_index
+        if isinstance(arm_index, list):
+            self.device_ids = list(range(len(arm_index)))
+        else:
+            self.device_ids = self.robot_ids
+
         self.device: Dict[int, BaseDevice] = dict()
         if device is None:
-            for robot_id in self.robot_ids:
+            for device_id in self.device_ids:
                 device_class = self.task_config.data_config.device_class
                 if device_class is not None:
                     if not issubclass(device_class, BaseDevice):
                         raise TypeError("device_class must inherit BaseDevice")
-                    self.device[robot_id] = device_class(
+                    self.device[device_id] = device_class(
                         device_params=self.task_config.data_config.device_params,
                         control_dt=self.robot_config.control_dt,
                     )
                 elif self.task_config.data_config.device_type == "vive":
                     from data_collector.device.vive import Vive
-                    self.device[robot_id] = Vive(
+                    self.device[device_id] = Vive(
                         device_params=self.task_config.data_config.device_params,
                     )
                 elif self.task_config.data_config.device_type == "spacemouse":
                     from data_collector.device.spacemouse import SpaceMouse
-                    self.device[robot_id] = SpaceMouse(
+                    self.device[device_id] = SpaceMouse(
                         device_params=self.task_config.data_config.device_params,
                         control_dt=self.robot_config.control_dt
                     )
@@ -465,31 +651,31 @@ class TeleopDataCollector:
         self.init_data_buffer()
         
     def __del__(self):
-        for robot_id in self.robot_ids:
-            self.device[robot_id].exit()
-            
+        for device_id in self.device_ids:
+            self.device[device_id].exit()
+
     def get_device_input(self, robot_references):
         output = dict()
         output["final_button"] = False
         output["final_valid"] = True
-        
-        for robot_id in self.robot_ids:
-            reference = robot_references[robot_id]
-            output[robot_id] = self.device[robot_id].get_input(
+
+        for device_id in self.device_ids:
+            reference = robot_references[device_id]
+            output[device_id] = self.device[device_id].get_input(
                 robot_pose=reference,
                 robot_joint=reference,
             )
             # Temporary: ignore the Vive button as the final button.
-            # output["final_button"] = output["final_button"] or output[robot_id]["button"]
-            output["final_valid"] = output["final_valid"] and output[robot_id]["valid"]
+            # output["final_button"] = output["final_button"] or output[device_id]["button"]
+            output["final_valid"] = output["final_valid"] and output[device_id]["valid"]
         return output
-    
+
     def get_control_mode(self):
         from helper.extra_utils import ROBOT_CONTROL_MODE
 
         device_modes = {
-            self.device[robot_id].CONTROL_MODE
-            for robot_id in self.robot_ids
+            self.device[device_id].CONTROL_MODE
+            for device_id in self.device_ids
         }
         if len(device_modes) != 1:
             raise ValueError(
@@ -533,8 +719,8 @@ class TeleopDataCollector:
         self.traj_len = 0
         
         # Reset device
-        for robot_id in self.robot_ids:
-            self.device[robot_id].reset()
+        for device_id in self.device_ids:
+            self.device[device_id].reset()
         
     def update_data_buffer(self, **kwargs):
         for k, v in kwargs.items():

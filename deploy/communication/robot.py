@@ -248,6 +248,16 @@ class Robot:
             raise ValueError
 
 
+def _resolve_robot_arm_index(arm_index, robot_id: int) -> int:
+    """Return the arm_index for a specific robot from a global or per-robot setting."""
+    if isinstance(arm_index, dict):
+        return arm_index.get(robot_id, 0)
+    if isinstance(arm_index, int):
+        return arm_index
+    raise TypeError(
+        f"arm_index must be int or dict, got {type(arm_index).__name__}")
+
+
 class RobotCluster:
     
     def __init__(self, robots: Dict[int, Robot]):
@@ -292,13 +302,16 @@ class RobotCluster:
              mode: str = "joint_abs", 
              wait=False, 
              **kwargs):
+        arm_index = kwargs.get("arm_index", 0)
         for robot_id, pos in target_pos.items():
+            robot_kwargs = dict(kwargs)
+            robot_kwargs["arm_index"] = _resolve_robot_arm_index(arm_index, robot_id)
             self.robots[robot_id].move(
                 target_pos=pos,
                 mode=mode,
                 wait=wait,
                 vel_ratio=vel_ratio[robot_id], acc_ratio=acc_ratio[robot_id],
-                **kwargs
+                **robot_kwargs
             )
 
     def tele_move(self, 
@@ -306,12 +319,15 @@ class RobotCluster:
                   vel_scale=Dict[int, float], acc_scale=Dict[int, float],
                   mode: str = "joint_abs", 
                   **kwargs):
+        arm_index = kwargs.get("arm_index", 0)
         for robot_id, pos in action.items():
+            robot_kwargs = dict(kwargs)
+            robot_kwargs["arm_index"] = _resolve_robot_arm_index(arm_index, robot_id)
             self.robots[robot_id].tele_move(
                 action=pos,
                 mode=mode,
                 vel_scale=vel_scale[robot_id], acc_scale=acc_scale[robot_id],
-                **kwargs
+                **robot_kwargs
             )
 
     def get_gripper_state(self, robot_ids: List[int]):

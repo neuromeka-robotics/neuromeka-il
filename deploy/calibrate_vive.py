@@ -282,6 +282,10 @@ def main() -> None:
     config = load_config()
     teleop_config = config.task_config.teleop_config
     arm_index = teleop_config.arm_index
+    if isinstance(arm_index, dict):
+        arm_index = arm_index[config.robot_config.robot_ids[0]]
+    elif isinstance(arm_index, list):
+        arm_index = arm_index[0]
     control_dt = config.robot_config.control_dt if args.execute else DEFAULT_CONTROL_DT
     if not args.execute:
         print("Dry run: connecting to the robot only to read the current pose; no motion or VIVE access.")

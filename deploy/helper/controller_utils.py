@@ -139,11 +139,11 @@ class Controller:
                     self.robot[robot_id].recover()
                     time.sleep(3.)
 
-    def exec_soft_stop(self, 
-                       last_action: Dict[int, List[float]], 
-                       control_period: float, 
+    def exec_soft_stop(self,
+                       last_action: Dict[int, List[float]],
+                       control_period: float,
                        mode: str = "task_abs",
-                       arm_index: int | None = None):
+                       arm_index: int | Dict[int, int] | None = None):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
 
         soft_stop_start = time.time()

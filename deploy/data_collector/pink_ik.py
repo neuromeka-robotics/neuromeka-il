@@ -283,3 +283,169 @@ class PinkTeleopIK:
                 f"orientation={orientation_error:.6g} rad)"
             ),
         }
+
+    def _ik_model_multi(
+            self,
+            full_q: np.ndarray,
+            joint_values_rad: dict[str, float],
+            arm_indices: list[int],
+            lock_non_selected_joints: bool) -> tuple[Any, np.ndarray]:
+        if not lock_non_selected_joints:
+            return self._full_model, full_q.copy()
+
+        movable_joint_names = set()
+        for arm_idx in arm_indices:
+            movable_joint_names.update(CHAIN_JOINT_NAMES[arm_idx])
+        locked_joint_ids = [
+            self._full_model.getJointId(joint_name)
+            for joint_name in DCP_ACTIVE_JOINT_NAMES
+            if joint_name not in movable_joint_names
+        ]
+        model = self._pin.buildReducedModel(
+            self._full_model, locked_joint_ids, full_q)
+        return model, self._model_configuration(model, joint_values_rad)
+
+    def solve_multi(
+            self,
+            targets: dict[int, Any],
+            init_jpos,
+            lock_non_selected_joints: bool = False) -> dict:
+        """Solve IK for multiple arm chains simultaneously.
+
+        Args:
+            targets: Mapping from arm_index to 6-D task pose target.
+            init_jpos: Initial joint position (q22 in degrees).
+            lock_non_selected_joints: If True, freezes every joint not
+                belonging to any of the requested arm chains.
+
+        Returns:
+            dict with keys ``success``, ``jpos`` (q18 in degrees), etc.
+        """
+        arm_indices = sorted(targets.keys())
+        for arm_idx in arm_indices:
+            if arm_idx not in CHAIN_JOINT_NAMES:
+                raise ValueError(
+                    f"Pink IK arm_index must be one of "
+                    f"{tuple(CHAIN_JOINT_NAMES)}, got {arm_idx}")
+
+        q22_deg = self._validate_vector(
+            init_jpos, 22, "Pink IK initial joint position")
+        joint_values_rad = dict(zip(
+            DCP_ACTIVE_JOINT_NAMES,
+            np.deg2rad(q22_deg[:len(DCP_ACTIVE_JOINT_NAMES)]),
+        ))
+        full_q = self._model_configuration(
+            self._full_model, joint_values_rad)
+        model, initial_q = self._ik_model_multi(
+            full_q,
+            joint_values_rad,
+            arm_indices,
+            lock_non_selected_joints,
+        )
+
+        configuration = self._pink.Configuration(
+            model, model.createData(), initial_q, copy_data=False)
+
+        tasks = []
+        for arm_idx in arm_indices:
+            frame_name = self._task_frames[arm_idx]
+            frame_task = self._frame_task_type(
+                frame_name,
+                position_cost=float(self._settings["position_cost"]),
+                orientation_cost=float(self._settings["orientation_cost"]),
+                lm_damping=float(self._settings["lm_damping"]),
+            )
+            target = self._validate_vector(
+                targets[arm_idx], 6, f"Pink IK target for arm {arm_idx}")
+            target_transform = self._pin.SE3(
+                self._rotation.from_euler(
+                    "xyz", target[3:], degrees=True).as_matrix(),
+                target[:3] / 1000.0,
+            )
+            frame_task.set_target(target_transform)
+            tasks.append(frame_task)
+
+        posture_cost = float(self._settings["posture_cost"])
+        if posture_cost > 0.0:
+            posture_task = self._posture_task_type(cost=posture_cost)
+            posture_task.set_target(initial_q)
+            tasks.append(posture_task)
+
+        per_arm_errors = {arm_idx: {
+            "position_error": float("inf"),
+            "orientation_error": float("inf"),
+        } for arm_idx in arm_indices}
+
+        max_iterations = int(self._settings["max_iterations"])
+        integration_dt = float(self._settings["integration_dt"])
+        iterations = 0
+        for iterations in range(max_iterations + 1):
+            all_converged = True
+            for arm_idx in arm_indices:
+                frame_task = tasks[arm_indices.index(arm_idx)]
+                error = frame_task.compute_error(configuration)
+                pos_err = float(np.linalg.norm(error[:3]))
+                ori_err = float(np.linalg.norm(error[3:]))
+                per_arm_errors[arm_idx]["position_error"] = pos_err
+                per_arm_errors[arm_idx]["orientation_error"] = ori_err
+                if (pos_err >= float(self._settings["position_tolerance_m"])
+                        or ori_err >= float(self._settings["orientation_tolerance_rad"])):
+                    all_converged = False
+
+            if all_converged:
+                solved_values = dict(joint_values_rad)
+                solved_values.update(self._joint_values(
+                    model, configuration.q))
+                jpos = np.rad2deg([
+                    solved_values[name] for name in DCP_ACTIVE_JOINT_NAMES
+                ]).tolist()
+                return {
+                    "success": True,
+                    "jpos": jpos,
+                    "iterations": iterations,
+                    "per_arm_errors": {
+                        k: {
+                            "position_error_m": v["position_error"],
+                            "orientation_error_rad": v["orientation_error"],
+                        }
+                        for k, v in per_arm_errors.items()
+                    },
+                }
+            if iterations == max_iterations:
+                break
+
+            try:
+                velocity = self._pink.solve_ik(
+                    configuration,
+                    tasks=tasks,
+                    dt=integration_dt,
+                    solver=str(self._settings["solver"]),
+                    damping=float(self._settings["damping"]),
+                    limits=(self._configuration_limit(model),),
+                )
+            except self._no_solution_found:
+                break
+            if not np.all(np.isfinite(velocity)):
+                break
+            configuration.integrate_inplace(velocity, integration_dt)
+
+        return {
+            "success": False,
+            "iterations": iterations,
+            "per_arm_errors": {
+                k: {
+                    "position_error_m": v["position_error"],
+                    "orientation_error_rad": v["orientation_error"],
+                }
+                for k, v in per_arm_errors.items()
+            },
+            "error": (
+                f"did not converge after {iterations} iterations; "
+                f"per-arm errors: "
+                + ", ".join(
+                    f"arm {k}: pos={v['position_error']:.6g}m "
+                    f"ori={v['orientation_error']:.6g}rad"
+                    for k, v in per_arm_errors.items()
+                )
+            ),
+        }

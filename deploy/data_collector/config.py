@@ -28,6 +28,13 @@ class DataCollectorConfig:
                 "data_to_collect['control'] must explicitly contain "
                 f"'{expected_control}' for robot_control_mode="
                 f"'{self.task_config.teleop_config.robot_control_mode}'")
+        wrong_control = (
+            "task_abs_control" if expected_control == "joint_abs_control"
+            else "joint_abs_control")
+        assert wrong_control not in configured_controls, (
+            f"data_to_collect['control'] contains '{wrong_control}' but "
+            f"robot_control_mode is '{self.task_config.teleop_config.robot_control_mode}'. "
+            f"Remove '{wrong_control}' from the control list.")
 
 CONFIGS = {
     "default": DataCollectorConfig(
@@ -112,8 +119,34 @@ CONFIGS = {
                 #control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 47.355045}, "y": {"min": -624.91986, "max": -544.72253}, "x": {"min": 243.68747, "max": 459.47855}})
             ),
             teleop_config = TELEOP_CONFIG(
+                # arm_index controls which arm chain each teleop device drives.
+                # It supports three setups:
+                #
+                # 1) Single robot, single arm, single device  (int)
+                #    arm_index = 1
+                #    One VIVE / SpaceMouse controls robot 0, left arm.
+                #
+                # 2) Single robot (e.g. humanoid), dual arm, two devices  (List[int])
+                #    arm_index = [1, 2]
+                #    Device 0 -> left arm (1), device 1 -> right arm (2).
+                #    joint_abs : Pink solves BOTH arms in ONE call using two
+                #                FrameTasks.  The resulting q18 is converted to
+                #                q22 and sent as a single move_telej_abs.
+                #                lock_non_selected_joints=True freezes the head
+                #                and torso; False lets Pink move the torso to
+                #                help both arms reach their targets.
+                #                STEP IK is NOT supported for this case.
+                #    task_abs  : two separate task commands (move_telel_abs),
+                #                one per arm, are sent to the same robot.
+                #                No IK involved.
+                #
+                # 3) Two robots, one arm each, two devices  (Dict[int, int])
+                #    arm_index = {0: 0, 1: 0}
+                #    Robot 0 -> 0 index arm, robot 1 -> 0 index arm.
+                #    Each robot receives its own independent command.
+                #
                 arm_index = 1,  # 0: head, 1: left arm, 2: right arm
-                robot_control_mode = "joint_abs",
+                robot_control_mode = "task_abs",
                 ik_type = "pink",  # "step" or "pink"
                 pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
                 # Used only for task_abs device -> Pink IK -> joint_abs robot.
@@ -126,6 +159,14 @@ CONFIGS = {
                 ),
             ),
         ),
+        # Saved data keys follow these naming rules:
+        #   - Per-robot data : "{type}_{robot_id}"
+        #     e.g. q_0, qdot_0, p_0, pdot_0, joint_abs_control_0, gripper_command_0
+        #   - Camera data    : "images.{type}.{cam_name}"
+        #     e.g. images.rgb.wrist, images.intrinsics.wrist
+        # For single-robot dual-arm teleop (arm_index = [1, 2]), the merged
+        # joint command is still saved under joint_abs_control_0 because there
+        # is only one robot (robot_id = 0).
         data_to_collect = {
             "proprio": ["q", "qdot", "p", "pdot"],
             # "gripper": ["gripper_position", "grasp_state"],
@@ -133,7 +174,7 @@ CONFIGS = {
                 "wrist": ["rgb", "intrinsics"],
             },
             # This must match teleop_config.robot_control_mode above.
-            "control": ["joint_abs_control"],
+            "control": ["task_abs_control"],
             # "control": ["joint_abs_control", "gripper_command"]
             #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],
             #"force_gain": ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif"],

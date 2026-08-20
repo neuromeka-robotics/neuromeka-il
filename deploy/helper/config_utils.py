@@ -139,7 +139,11 @@ class TELEOP_CONFIG:
     # Device output mode comes from BaseDevice.CONTROL_MODE. This is the mode
     # actually sent to the robot after FK/IK conversion.
     robot_control_mode: str = "task_abs"
-    arm_index: int = 0
+    # arm_index can be:
+    #   - int: single robot, single arm (backward compatible)
+    #   - Dict[int, int]: multiple robots, each with one arm
+    #   - List[int]: single robot, multiple arms (e.g., dual-arm humanoid teleop)
+    arm_index: int | Dict[int, int] | List[int] = 0
     # IK is used only when a task-space device drives joint-space teleop.
     # STEP does not support locking; Pink locks joints inside its optimization.
     ik_type: str = "step"
@@ -153,8 +157,20 @@ class TELEOP_CONFIG:
         if self.robot_control_mode not in ["joint_abs", "task_abs"]:
             raise ValueError(
                 f"Unavailable robot control mode {self.robot_control_mode}")
-        if self.arm_index < 0:
-            raise ValueError("arm_index must be non-negative")
+        if isinstance(self.arm_index, int):
+            if self.arm_index < 0:
+                raise ValueError("arm_index must be non-negative")
+        elif isinstance(self.arm_index, dict):
+            for idx in self.arm_index.values():
+                if idx < 0:
+                    raise ValueError("arm_index values must be non-negative")
+        elif isinstance(self.arm_index, list):
+            for idx in self.arm_index:
+                if idx < 0:
+                    raise ValueError("arm_index values must be non-negative")
+        else:
+            raise TypeError(
+                "arm_index must be an int, a List[int], or a Dict[int, int]")
         if self.ik_type not in ["step", "pink"]:
             raise ValueError(f"Unavailable IK type {self.ik_type}")
         if not isinstance(self.lock_non_selected_joints, bool):

@@ -47,7 +47,6 @@ class Vive(BaseDevice):
     def get_input(self, **kwargs):
         pose = self.device.get_pose_matrix()
         controller_inputs = self.device.get_controller_inputs()
-        print(controller_inputs)
         
         # Communication lost
         if pose is None:

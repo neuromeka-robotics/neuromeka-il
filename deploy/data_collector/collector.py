@@ -3,14 +3,10 @@ import os
 import h5py
 import json
 import cv2
-import select
 import sys
-import termios
 import time
 from threading import Thread
-from queue import Empty, Queue
 from typing import Dict
-import tty
 import numpy as np
 
 import matplotlib
@@ -107,7 +103,6 @@ class DataCollectionScheduler(Controller):
         # set empty variable
         self._collection_triggered = False
         self._collection_thread = None
-        self._final_button_queue = Queue()
         self._collection_error = None
 
     def exec_collection(self, mode: str):
@@ -117,30 +112,13 @@ class DataCollectionScheduler(Controller):
                 # stop nn control + move to start joint position
                 self.exec_home_movement(wait=True)
 
-            # Do not reuse an extra key press from an earlier collection.
-            while not self._final_button_queue.empty():
-                self._final_button_queue.get_nowait()
-
             self._collection_triggered = True
             self._collection_error = None
-            
+
             self._collection_thread = Thread(target=self._collection_fn, daemon=True)
             self._collection_thread.start()
-            print("Press 't' to start/stop recording")
-
-            # Temporarily use keyboard input while the Vive buttons are unavailable.
-            stdin_fd = sys.stdin.fileno()
-            terminal_settings = termios.tcgetattr(stdin_fd)
-            try:
-                tty.setcbreak(stdin_fd)
-                while self._collection_thread.is_alive():
-                    readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-                    if readable and getch.getch() == "t":
-                        self._final_button_queue.put(True)
-            finally:
-                termios.tcsetattr(
-                    stdin_fd, termios.TCSADRAIN, terminal_settings)
-                self._collection_thread.join()
+            print("Press trackpad to start/stop recording")
+            self._collection_thread.join()
 
             if self._collection_error is not None:
                 print(
@@ -303,13 +281,6 @@ class DataCollectionScheduler(Controller):
                 device_data = self.data_collector.get_device_input(
                     robot_references=references)
 
-                # Temporary keyboard replacement for the Vive final button.
-                try:
-                    device_data["final_button"] = (
-                        self._final_button_queue.get_nowait())
-                except Empty:
-                    device_data["final_button"] = False
-
                 if not device_data["final_valid"]:
                     raise RuntimeError(
                         "Device input is invalid or the connection was lost")
@@ -372,14 +343,14 @@ class DataCollectionScheduler(Controller):
                                     q_full)}
                             gripper_command_val = float(
                                 1. - np.round(device_data[0]["trigger"]))
-                            # self.robot[rid].tele_move(
-                            #     action=value[rid],
-                            #     mode="joint_abs",
-                            #     vel_scale=self.robot_config.robot_params[
-                            #         rid]["control"]["vel_scale"],
-                            #     acc_scale=self.robot_config.robot_params[
-                            #         rid]["control"]["acc_scale"],
-                            # )
+                            self.robot[rid].tele_move(
+                                action=value[rid],
+                                mode="joint_abs",
+                                vel_scale=self.robot_config.robot_params[
+                                    rid]["control"]["vel_scale"],
+                                acc_scale=self.robot_config.robot_params[
+                                    rid]["control"]["acc_scale"],
+                            )
                             self.robot[rid].move_gripper(
                                 mode="thread", value=gripper_command_val)
                             gripper_command = {rid: gripper_command_val}
@@ -407,15 +378,15 @@ class DataCollectionScheduler(Controller):
                                 )
                                 last_per_arm_commands[arm_idx] = (
                                     converted.command)
-                                # self.robot[rid].tele_move(
-                                #     action=converted.command,
-                                #     mode="task_abs",
-                                #     vel_scale=self.robot_config.robot_params[
-                                #         rid]["control"]["vel_scale"],
-                                #     acc_scale=self.robot_config.robot_params[
-                                #         rid]["control"]["acc_scale"],
-                                #     arm_index=arm_idx,
-                                # )
+                                self.robot[rid].tele_move(
+                                    action=converted.command,
+                                    mode="task_abs",
+                                    vel_scale=self.robot_config.robot_params[
+                                        rid]["control"]["vel_scale"],
+                                    acc_scale=self.robot_config.robot_params[
+                                        rid]["control"]["acc_scale"],
+                                    arm_index=arm_idx,
+                                )
                             value = {
                                 rid: last_per_arm_commands[
                                     self.arm_index[0]]}
@@ -469,19 +440,19 @@ class DataCollectionScheduler(Controller):
 
                         # Send only commands that passed full dimensional
                         # validation.
-                        # self.robot_cluster.tele_move(
-                        #     action=value,
-                        #     mode=self.control_mode,
-                        #     vel_scale={
-                        #         robot_id: self.robot_config.robot_params[
-                        #             robot_id]["control"]["vel_scale"]
-                        #         for robot_id in self.robot_config.robot_ids},
-                        #     acc_scale={
-                        #         robot_id: self.robot_config.robot_params[
-                        #             robot_id]["control"]["acc_scale"]
-                        #         for robot_id in self.robot_config.robot_ids},
-                        #     arm_index=self.arm_index,
-                        # )
+                        self.robot_cluster.tele_move(
+                            action=value,
+                            mode=self.control_mode,
+                            vel_scale={
+                                robot_id: self.robot_config.robot_params[
+                                    robot_id]["control"]["vel_scale"]
+                                for robot_id in self.robot_config.robot_ids},
+                            acc_scale={
+                                robot_id: self.robot_config.robot_params[
+                                    robot_id]["control"]["acc_scale"]
+                                for robot_id in self.robot_config.robot_ids},
+                            arm_index=self.arm_index,
+                        )
                         self.robot_cluster.move_gripper(
                             mode="thread", value=gripper_command)
 
@@ -513,17 +484,17 @@ class DataCollectionScheduler(Controller):
                         soft_stop_start = time.time()
                         while time.time() - soft_stop_start < 0.2:
                             soft_stop_control_start = time.time()
-                            # for arm_idx in self.arm_index:
-                            #     self.robot[rid].tele_move(
-                            #         action=last_per_arm_commands.get(
-                            #             arm_idx, value[rid]),
-                            #         mode="task_abs",
-                            #         vel_scale=self.robot_config.robot_params[
-                            #             rid]["control"]["vel_scale"],
-                            #         acc_scale=self.robot_config.robot_params[
-                            #             rid]["control"]["acc_scale"],
-                            #         arm_index=arm_idx,
-                            #     )
+                            for arm_idx in self.arm_index:
+                                self.robot[rid].tele_move(
+                                    action=last_per_arm_commands.get(
+                                        arm_idx, value[rid]),
+                                    mode="task_abs",
+                                    vel_scale=self.robot_config.robot_params[
+                                        rid]["control"]["vel_scale"],
+                                    acc_scale=self.robot_config.robot_params[
+                                        rid]["control"]["acc_scale"],
+                                    arm_index=arm_idx,
+                                )
                             wait_time = self.robot_config.control_dt - (
                                 time.time() - soft_stop_control_start)
                             if wait_time > 0.:
@@ -665,8 +636,8 @@ class TeleopDataCollector:
                 robot_pose=reference,
                 robot_joint=reference,
             )
-            # Temporary: ignore the Vive button as the final button.
-            # output["final_button"] = output["final_button"] or output[device_id]["button"]
+            output["final_button"] = (
+                output["final_button"] or output[device_id]["button"])
             output["final_valid"] = output["final_valid"] and output[device_id]["valid"]
         return output
 

@@ -37,13 +37,14 @@ class DataCollectorConfig:
             f"Remove '{wrong_control}' from the control list.")
 
 CONFIGS = {
-    "default": DataCollectorConfig(
+    "lift_box": DataCollectorConfig(
         robot_config = ROBOT_CONFIG(
             robot_class = HumanoidRobot,
             robot_params = {
                 0: {
                     "ip": "192.168.0.180",
-                    "home_pos": [-0.022166412, 0.01979957, 0.0222174, 0.025983755, -138.70251, -25.199673, 76.68596, -99.856125, 77.27083, -37.662327, 4.3381577, 137.05807, 25.11176, -73.127144, 102.0329, -73.94338, 37.87939, 0.020310974, 0.0, 0.0, 0.0, 0.0],
+                    # "home_pos": [-0.022166412, 0.01979957, 0.0222174, 0.025983755, -138.70251, -25.199673, 76.68596, -99.856125, 77.27083, -37.662327, 4.3381577, 137.05807, 25.11176, -73.127144, 102.0329, -73.94338, 37.87939, 0.020310974, 0.0, 0.0, 0.0, 0.0],
+                    "home_pos": [0.0, 0.0, 0.0, 0.0, 0.0, -79.985, -96.142, -100.096, -90.000, 0.0, 0.0, 0.0, 79.985, 96.142, 100.096, 90.000, 0.0, 0.0, 0., 0., 0., 0.],
                     "gripper": {
                         "enable": False,
                         "backend": "integrated_dh",
@@ -90,7 +91,7 @@ CONFIGS = {
             data_config = DATA_CONFIG(
                 device_type = "vive",
                 device_params = {
-                    "calib_uvw": [1.5864221543618953, 0.02660983748319314, -2.028333652578424],
+                    "calib_uvw": [1.5845395944590503, -0.07050698798703221, -0.9403962572922119],
                 }
             ),
             # data_config = DATA_CONFIG(
@@ -145,8 +146,8 @@ CONFIGS = {
                 #    Robot 0 -> 0 index arm, robot 1 -> 0 index arm.
                 #    Each robot receives its own independent command.
                 #
-                arm_index = 1,  # 0: head, 1: left arm, 2: right arm
-                robot_control_mode = "task_abs",
+                arm_index = [1, 2],  # 0: head, 1: left arm, 2: right arm
+                robot_control_mode = "joint_abs",
                 ik_type = "pink",  # "step" or "pink"
                 pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
                 # Used only for task_abs device -> Pink IK -> joint_abs robot.
@@ -155,7 +156,7 @@ CONFIGS = {
                 lock_non_selected_joints = True,
                 compliance = COMPLIANCE_CONFIG(
                     enable = True,
-                    stiffness = [50] * 22,
+                    stiffness = [100] * 22,
                 ),
             ),
         ),
@@ -174,7 +175,7 @@ CONFIGS = {
                 "wrist": ["rgb", "intrinsics"],
             },
             # This must match teleop_config.robot_control_mode above.
-            "control": ["task_abs_control"],
+            "control": ["joint_abs_control"],
             # "control": ["joint_abs_control", "gripper_command"]
             #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],
             #"force_gain": ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif"],

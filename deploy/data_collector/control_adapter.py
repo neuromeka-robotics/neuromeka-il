@@ -17,6 +17,8 @@ class ControlConversionError(RuntimeError):
 class ConvertedControl:
     mode: str
     command: List[float]
+    ik_success: bool = True
+    ik_error: str | None = None
 
 
 def convert_device_control(
@@ -46,6 +48,9 @@ def convert_device_control(
             "Joint locking is unavailable for STEP IK; use Pink IK or "
             "disable lock_non_selected_joints")
 
+    ik_success = True
+    ik_error = None
+
     if device_mode == robot_mode == "joint_abs":
         command = robot.validate_joint_command(device_command)
     elif device_mode == robot_mode == "task_abs":
@@ -70,11 +75,15 @@ def convert_device_control(
                 arm_index=arm_index,
                 lock_non_selected_joints=lock_non_selected_joints,
             )
-        if not result.get("success", False):
-            raise ControlConversionError(
-                f"{ik_type.upper()} inverse kinematics failed for arm "
-                f"{arm_index}: "
-                f"{result.get('error', 'unknown controller error')}")
+        ik_success = bool(result.get("success", False))
+        if not ik_success:
+            ik_error = result.get("error", "unknown controller error")
+            # Pink exposes its final valid iterate on non-convergence. STEP
+            # does not, so its existing fail-fast behavior remains unchanged.
+            if ik_type != "pink" or "jpos" not in result:
+                raise ControlConversionError(
+                    f"{ik_type.upper()} inverse kinematics failed for arm "
+                    f"{arm_index}: {ik_error}")
         try:
             command_reference = None
             if ik_type == "pink" and lock_non_selected_joints:
@@ -115,4 +124,9 @@ def convert_device_control(
                 f"Forward kinematics returned an invalid task command: {exc}") \
                 from exc
 
-    return ConvertedControl(mode=robot_mode, command=command)
+    return ConvertedControl(
+        mode=robot_mode,
+        command=command,
+        ik_success=ik_success,
+        ik_error=ik_error,
+    )

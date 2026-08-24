@@ -92,6 +92,11 @@ CONFIGS = {
                 device_type = "vive",
                 device_params = {
                     "calib_uvw": [1.5845395944590503, -0.07050698798703221, -0.9403962572922119],
+                    # "absolute": target stays anchored to the robot pose at
+                    # reset. "relative": apply each VIVE delta to the latest
+                    # measured robot pose, accepting compliance motion.
+                    # "relative" not good. Too small value
+                    "tracking_mode": "absolute",  
                 }
             ),
             # data_config = DATA_CONFIG(

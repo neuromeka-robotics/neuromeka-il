@@ -155,6 +155,18 @@ class PinkTeleopIK:
             values[joint_name] = float(q[joint.idx_q])
         return values
 
+    def _result_jpos(
+            self,
+            model: Any,
+            configuration: Any,
+            initial_joint_values_rad: dict[str, float]) -> list[float]:
+        """Return the latest valid Pink iterate in public q18 order."""
+        solved_values = dict(initial_joint_values_rad)
+        solved_values.update(self._joint_values(model, configuration.q))
+        return np.rad2deg([
+            solved_values[name] for name in DCP_ACTIVE_JOINT_NAMES
+        ]).tolist()
+
     def _ik_model(
             self,
             full_q: np.ndarray,
@@ -241,15 +253,10 @@ class PinkTeleopIK:
                 and orientation_error
                 < float(self._settings["orientation_tolerance_rad"])
             ):
-                solved_values = dict(joint_values_rad)
-                solved_values.update(self._joint_values(
-                    model, configuration.q))
-                jpos = np.rad2deg([
-                    solved_values[name] for name in DCP_ACTIVE_JOINT_NAMES
-                ]).tolist()
                 return {
                     "success": True,
-                    "jpos": jpos,
+                    "jpos": self._result_jpos(
+                        model, configuration, joint_values_rad),
                     "iterations": iterations,
                     "position_error_m": position_error,
                     "orientation_error_rad": orientation_error,
@@ -274,6 +281,10 @@ class PinkTeleopIK:
 
         return {
             "success": False,
+            # Preserve the final valid iterate so real-time callers can use
+            # the best result found before the iteration budget was exhausted.
+            "jpos": self._result_jpos(
+                model, configuration, joint_values_rad),
             "iterations": iterations,
             "position_error_m": position_error,
             "orientation_error_rad": orientation_error,
@@ -393,15 +404,10 @@ class PinkTeleopIK:
                     all_converged = False
 
             if all_converged:
-                solved_values = dict(joint_values_rad)
-                solved_values.update(self._joint_values(
-                    model, configuration.q))
-                jpos = np.rad2deg([
-                    solved_values[name] for name in DCP_ACTIVE_JOINT_NAMES
-                ]).tolist()
                 return {
                     "success": True,
-                    "jpos": jpos,
+                    "jpos": self._result_jpos(
+                        model, configuration, joint_values_rad),
                     "iterations": iterations,
                     "per_arm_errors": {
                         k: {
@@ -431,7 +437,21 @@ class PinkTeleopIK:
 
         return {
             "success": False,
+            # Preserve the final valid iterate so real-time callers can use
+            # the best result found before the iteration budget was exhausted.
+            "jpos": self._result_jpos(
+                model, configuration, joint_values_rad),
             "iterations": iterations,
+            "failed_arms": [
+                arm_idx
+                for arm_idx, error in per_arm_errors.items()
+                if (
+                    error["position_error"]
+                    >= float(self._settings["position_tolerance_m"])
+                    or error["orientation_error"]
+                    >= float(self._settings["orientation_tolerance_rad"])
+                )
+            ],
             "per_arm_errors": {
                 k: {
                     "position_error_m": v["position_error"],

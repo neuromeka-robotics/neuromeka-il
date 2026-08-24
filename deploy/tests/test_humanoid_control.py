@@ -112,6 +112,25 @@ class HumanoidControlConversionTest(unittest.TestCase):
                 self.robot, [0.] * 6, "task_abs", "joint_abs",
                 self.state, arm_index=2)
 
+    def test_failed_pink_ik_uses_final_iterate(self):
+        final_iterate = [100. + index for index in range(18)]
+        pink_solver = MagicMock()
+        pink_solver.solve.return_value = {
+            "success": False,
+            "jpos": final_iterate,
+            "error": "iteration budget exhausted",
+        }
+
+        converted = convert_device_control(
+            self.robot, [0.] * 6, "task_abs", "joint_abs",
+            self.state, arm_index=2, ik_type="pink",
+            pink_solver=pink_solver)
+
+        self.assertEqual(converted.command, final_iterate + [0.] * 4)
+        self.assertFalse(converted.ik_success)
+        self.assertEqual(
+            converted.ik_error, "iteration budget exhausted")
+
     def test_joint_to_task_uses_arm(self):
         expected = [10., 20., 30., 40., 50., 60.]
         self.robot.robot_client.forward_kin.return_value = {

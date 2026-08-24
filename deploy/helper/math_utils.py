@@ -215,33 +215,79 @@ class MathFunc:
 
 
 class TaskControlTransformation:
-    def __init__(self, fixed_robot_to_fixed_device_euler):
+    VALID_TRACKING_MODES = ("absolute", "relative")
+
+    def __init__(
+            self,
+            fixed_robot_to_fixed_device_euler,
+            tracking_mode="absolute"):
+        """Map device motion into robot task-space targets.
+
+        ``absolute`` anchors both poses at reset and reproduces the original
+        behavior. ``relative`` applies the latest device-pose delta to the
+        currently measured robot pose, so external compliance displacement is
+        accepted as the new baseline rather than becoming persistent error.
         """
-        Fixed robot frame : R
-        Initial robot end frame : r
-        Current robot end frame : r_
-        Fixed device frame : V
-        Initial device frame : v
-        Current device frame : v_
-        """
+        if tracking_mode not in self.VALID_TRACKING_MODES:
+            raise ValueError(
+                f"Unavailable tracking mode {tracking_mode!r}; expected one "
+                f"of {self.VALID_TRACKING_MODES}")
+        self.tracking_mode = tracking_mode
         self.R_RV = MathFunc.euler_to_rotMat(
             fixed_robot_to_fixed_device_euler[0], fixed_robot_to_fixed_device_euler[1], fixed_robot_to_fixed_device_euler[2])
         self.reset()
         
     def reset(self):
         self.init_device = SE3()  # P_Vv, R_Vv
+        self.previous_device = SE3()  # Previous pose for relative tracking
         self.current_device = SE3()  # P_Vv_, R_Vv_
         self.init_robot_end = SE3()  # P_Rr, R_Rr
         self.current_robot_end = SE3()  # P_Rr_, R_Rr_
 
-    def apply(self):
-        P_vv__in_R = self.R_RV @ (self.current_device.pos - self.init_device.pos)
-        R_Rv = self.R_RV @ self.init_device.rot
+    @staticmethod
+    def _robot_pose_to_se3(robot_pose):
+        pose = np.asarray(robot_pose, dtype=np.float64)
+        if pose.shape != (6,):
+            raise ValueError(
+                f"Robot task pose must have shape (6,), got {pose.shape}")
+        if not np.all(np.isfinite(pose)):
+            raise ValueError("Robot task pose contains NaN or infinite values")
+        robot_end = SE3()
+        robot_end.pos = pose[:3].copy()
+        robot_end.rot = MathFunc.euler_to_rotMat(*np.deg2rad(pose[3:]))
+        return robot_end
+
+    def initialize(self, robot_pose):
+        """Anchor the transformation at the current device and robot poses."""
+        self.init_device.pos = self.current_device.pos.copy()
+        self.init_device.rot = self.current_device.rot.copy()
+        self.previous_device.pos = self.current_device.pos.copy()
+        self.previous_device.rot = self.current_device.rot.copy()
+        self.init_robot_end = self._robot_pose_to_se3(robot_pose)
+
+    def apply(self, robot_pose=None):
+        if self.tracking_mode == "relative":
+            if robot_pose is None:
+                raise ValueError(
+                    "Relative tracking requires the current robot task pose")
+            reference_device = self.previous_device
+            reference_robot_end = self._robot_pose_to_se3(robot_pose)
+        else:
+            reference_device = self.init_device
+            reference_robot_end = self.init_robot_end
+
+        P_vv__in_R = self.R_RV @ (
+            self.current_device.pos - reference_device.pos)
+        R_Rv = self.R_RV @ reference_device.rot
         R_Rv_ = self.R_RV @ self.current_device.rot
         R_Rv_Rv = R_Rv_ @ R_Rv.T
 
-        self.current_robot_end.pos = self.init_robot_end.pos + P_vv__in_R
-        self.current_robot_end.rot = R_Rv_Rv @ self.init_robot_end.rot
+        self.current_robot_end.pos = reference_robot_end.pos + P_vv__in_R
+        self.current_robot_end.rot = R_Rv_Rv @ reference_robot_end.rot
+
+        if self.tracking_mode == "relative":
+            self.previous_device.pos = self.current_device.pos.copy()
+            self.previous_device.rot = self.current_device.rot.copy()
 
         # compute control input
         current_robot_end_euler = MathFunc.rotMat_to_euler(self.current_robot_end.rot) * 180 / np.pi  # rad -> degree

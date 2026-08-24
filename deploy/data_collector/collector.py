@@ -30,6 +30,13 @@ from data_collector.config import DataCollectorConfig, CONFIGS as DATA_COLLECTOR
 
 
 class DataCollectionScheduler(Controller):
+
+    def _reset_device_references(self, device_ids):
+        """Re-anchor selected teleop devices on their next input sample."""
+        for device_id in device_ids:
+            device = self.data_collector.device.get(device_id)
+            if device is not None:
+                device.reset()
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
@@ -282,8 +289,8 @@ class DataCollectionScheduler(Controller):
                     robot_references=references)
 
                 if not device_data["final_valid"]:
-                    raise RuntimeError(
-                        "Device input is invalid or the connection was lost")
+                    print("Device input lost; ending collection.")
+                    break
 
                 if (is_recording and not prev_button
                         and device_data["final_button"]):
@@ -298,8 +305,10 @@ class DataCollectionScheduler(Controller):
                     device_data = self.data_collector.get_device_input(
                         robot_references=references)
                     if not device_data["final_valid"]:
-                        raise RuntimeError(
-                            "Device input became invalid after reset")
+                        print(
+                            "Device input lost after reset; "
+                            "ending collection.")
+                        break
 
                 prev_button = device_data["final_button"]
 
@@ -330,9 +339,22 @@ class DataCollectionScheduler(Controller):
                                     "error", "unknown controller error")
                                 arm_str = ", ".join(
                                     str(a) for a in targets.keys())
-                                raise RuntimeError(
-                                    f"Pink IK failed for arms [{arm_str}]: "
+                                print(
+                                    f"Pink IK did not converge for arms "
+                                    f"[{arm_str}]; executing its final "
+                                    "iterate and resetting the failed device "
+                                    "reference: "
                                     f"{error}")
+                                failed_arms = set(result.get(
+                                    "failed_arms", targets.keys()))
+                                failed_device_ids = [
+                                    device_id
+                                    for device_id, arm_idx in enumerate(
+                                        self.arm_index)
+                                    if arm_idx in failed_arms
+                                ]
+                                self._reset_device_references(
+                                    failed_device_ids)
 
                             q18 = result["jpos"]
                             dummy_dof = getattr(
@@ -427,6 +449,21 @@ class DataCollectionScheduler(Controller):
                                     initial_states[robot_id]["q"]),
                                 pink_solver=self.pink_solvers.get(robot_id),
                             )
+                        failed_ik = {
+                            robot_id: result
+                            for robot_id, result in converted.items()
+                            if not result.ik_success
+                        }
+                        if failed_ik:
+                            errors = "; ".join(
+                                f"robot {robot_id}: {result.ik_error}"
+                                for robot_id, result in failed_ik.items()
+                            )
+                            print(
+                                "Pink IK did not converge; executing its "
+                                "final iterate and resetting the failed "
+                                f"device reference: {errors}")
+                            self._reset_device_references(failed_ik.keys())
                         value = {
                             robot_id: converted[robot_id].command
                             for robot_id in self.robot_ids

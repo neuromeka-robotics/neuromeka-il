@@ -4,7 +4,7 @@ import numpy as np
 
 # helper functions
 from data_collector.device.base import BaseDevice
-from helper.math_utils import MathFunc, TaskControlTransformation
+from helper.math_utils import TaskControlTransformation
 from helper.extra_utils import ROBOT_CONTROL_MODE
 
 class Vive(BaseDevice):
@@ -18,7 +18,10 @@ class Vive(BaseDevice):
         self.device_name = f"controller_{Vive.DEVICE_IDX}"
         self.device_params = kwargs["device_params"]
         self.control_transform = TaskControlTransformation(
-            fixed_robot_to_fixed_device_euler=self.device_params["calib_uvw"])
+            fixed_robot_to_fixed_device_euler=self.device_params["calib_uvw"],
+            tracking_mode=self.device_params.get(
+                "tracking_mode", "absolute"),
+        )
         
         # Check devices
         if Vive.DEVICE_POOLS is None:
@@ -63,16 +66,12 @@ class Vive(BaseDevice):
         if not self.is_initialized:
             assert "robot_pose" in kwargs.keys(), "Required data for initialization are not given"
 
-            self.control_transform.init_device.pos = self.control_transform.current_device.pos.copy()
-            self.control_transform.init_device.rot = self.control_transform.current_device.rot.copy()
-            end_pose = np.array(kwargs["robot_pose"])
-            end_pose[3:] *= np.pi / 180  # degree -> rad
-            self.control_transform.init_robot_end.pos = end_pose[:3]
-            self.control_transform.init_robot_end.rot = MathFunc.euler_to_rotMat(end_pose[3:][0], end_pose[3:][1], end_pose[3:][2])
+            self.control_transform.initialize(kwargs["robot_pose"])
             self.is_initialized = True
             
         output = dict()
-        output["control"] = self.control_transform.apply()  # 0~2: position / 3~5: orientation (euler)
+        output["control"] = self.control_transform.apply(
+            robot_pose=kwargs["robot_pose"])
         output["button"] = controller_inputs["trackpad_pressed"]  # Bool
         output["trigger"] = controller_inputs["trigger"]  # Continuous (0 ~ 1)
         output["valid"] = True  # Bool

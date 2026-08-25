@@ -73,8 +73,13 @@ class DataCollectionScheduler(Controller):
             device=kwargs.get("device", None),
         )
         self.device_output_mode = self.data_collector.get_control_mode()
-        self.control_mode = self.task_config.teleop_config.robot_control_mode
-        raw_arm_index = self.task_config.teleop_config.arm_index
+        control_config = self.task_config.control_config
+        if control_config.teleop_config is None:
+            raise ValueError(
+                "Data collection requires control_config.teleop_config")
+        self.teleop_config = control_config.teleop_config
+        self.control_mode = control_config.robot_control_mode
+        raw_arm_index = self.teleop_config.arm_index
         if isinstance(raw_arm_index, int):
             self.arm_index = {robot_id: raw_arm_index for robot_id in self.robot_ids}
             self.is_multi_arm = False
@@ -83,8 +88,8 @@ class DataCollectionScheduler(Controller):
                 raise ValueError(
                     "List[int] arm_index is only supported for single-robot "
                     "dual-arm teleop. Use Dict[int, int] for multi-robot setups.")
-            if (self.task_config.teleop_config.robot_control_mode == "joint_abs"
-                    and self.task_config.teleop_config.ik_type == "step"):
+            if (control_config.robot_control_mode == "joint_abs"
+                    and self.teleop_config.ik_type == "step"):
                 raise ValueError(
                     "Dual-arm teleop on a single robot with joint_abs mode "
                     "requires Pink IK. STEP IK does not support simultaneous "
@@ -94,7 +99,7 @@ class DataCollectionScheduler(Controller):
         else:
             self.arm_index = raw_arm_index
             self.is_multi_arm = False
-        self.ik_type = self.task_config.teleop_config.ik_type
+        self.ik_type = self.teleop_config.ik_type
         self.pink_solvers = {}
         if (self.device_output_mode == "task_abs"
                 and self.control_mode == "joint_abs"
@@ -103,7 +108,7 @@ class DataCollectionScheduler(Controller):
 
             self.pink_solvers = {
                 robot_id: PinkTeleopIK(
-                    self.task_config.teleop_config.pink_config_path)
+                    self.teleop_config.pink_config_path)
                 for robot_id in self.robot_ids
             }
         
@@ -331,8 +336,7 @@ class DataCollectionScheduler(Controller):
                                 targets=targets,
                                 init_jpos=robot_states[rid]["q"],
                                 lock_non_selected_joints=(
-                                    self.task_config.teleop_config
-                                    .lock_non_selected_joints),
+                                    self.teleop_config.lock_non_selected_joints),
                             )
                             if not result.get("success", False):
                                 error = result.get(
@@ -392,7 +396,7 @@ class DataCollectionScheduler(Controller):
                                     arm_index=arm_idx,
                                     ik_type=self.ik_type,
                                     lock_non_selected_joints=(
-                                        self.task_config.teleop_config
+                                        self.teleop_config
                                         .lock_non_selected_joints),
                                     locked_joint_reference=(
                                         initial_states[rid]["q"]),
@@ -443,8 +447,7 @@ class DataCollectionScheduler(Controller):
                                 arm_index=self.arm_index[robot_id],
                                 ik_type=self.ik_type,
                                 lock_non_selected_joints=(
-                                    self.task_config.teleop_config
-                                    .lock_non_selected_joints),
+                                    self.teleop_config.lock_non_selected_joints),
                                 locked_joint_reference=(
                                     initial_states[robot_id]["q"]),
                                 pink_solver=self.pink_solvers.get(robot_id),
@@ -578,7 +581,11 @@ class TeleopDataCollector:
         self.task_name = task_config.name
         self.data_collector_config = data_collector_config
         
-        arm_index = self.task_config.teleop_config.arm_index
+        teleop_config = self.task_config.control_config.teleop_config
+        if teleop_config is None:
+            raise ValueError(
+                "Data collection requires control_config.teleop_config")
+        arm_index = teleop_config.arm_index
         if isinstance(arm_index, list):
             self.device_ids = list(range(len(arm_index)))
         else:

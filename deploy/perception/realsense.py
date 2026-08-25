@@ -59,6 +59,7 @@ class RealsenseCam:
                 [0, 0, 1],
             ]
         )
+        self.dist_coeffs = np.asarray(raw_intrinsics.coeffs[:5], dtype=np.float64)
 
         # Set RGB-Depth align function
         if align:
@@ -101,7 +102,8 @@ class RealsenseCamHandler:
         self.data = {
             "rgb": None,
             "depth": None,
-            "intrinsics": None
+            "intrinsics": None,
+            "dist_coeffs": None,
         }
         
         # Set camera
@@ -143,6 +145,7 @@ class RealsenseCamHandler:
         self.data["rgb"] = self.camera.color_image.copy()
         self.data["depth"] = self.camera.depth_image.copy()
         self.data["intrinsics"] = self.camera.intrinsics.copy()
+        self.data["dist_coeffs"] = self.camera.dist_coeffs.copy()
         self._cam_data_lock.release()
         self._cam_updated = True
         
@@ -165,6 +168,7 @@ class RealsenseCamHandler:
             output["rgb"] = self.data["rgb"].copy()
             output["depth"] = self.data["depth"].copy()
             output["intrinsics"] = self.data["intrinsics"].copy()
+            output["dist_coeffs"] = self.data["dist_coeffs"].copy()
             self._cam_data_lock.release()
             return output
         

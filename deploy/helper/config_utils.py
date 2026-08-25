@@ -136,9 +136,8 @@ class COMPLIANCE_CONFIG:
 
 @dataclass
 class TELEOP_CONFIG:
-    # Device output mode comes from BaseDevice.CONTROL_MODE. This is the mode
-    # actually sent to the robot after FK/IK conversion.
-    robot_control_mode: str = "task_abs"
+    """Device mapping and IK settings used only for human teleoperation."""
+
     # arm_index can be:
     #   - int: single robot, single arm (backward compatible)
     #   - Dict[int, int]: multiple robots, each with one arm
@@ -151,12 +150,8 @@ class TELEOP_CONFIG:
     # During task->joint conversion, keep all joints outside the selected
     # head/arm chain at their current values.
     lock_non_selected_joints: bool = False
-    compliance: COMPLIANCE_CONFIG = field(default_factory=COMPLIANCE_CONFIG)
 
     def __post_init__(self):
-        if self.robot_control_mode not in ["joint_abs", "task_abs"]:
-            raise ValueError(
-                f"Unavailable robot control mode {self.robot_control_mode}")
         if isinstance(self.arm_index, int):
             if self.arm_index < 0:
                 raise ValueError("arm_index must be non-negative")
@@ -182,6 +177,23 @@ class TELEOP_CONFIG:
         if self.ik_type == "pink" and not self.pink_config_path:
             raise ValueError("pink_config_path is required for Pink IK")
 
+
+@dataclass
+class CONTROL_CONFIG:
+    """Robot command settings shared by policies and teleoperation."""
+
+    # Mode sent to the robot after any teleoperation device conversion or
+    # policy inference.
+    robot_control_mode: str = "task_abs"
+    compliance: COMPLIANCE_CONFIG = field(default_factory=COMPLIANCE_CONFIG)
+    teleop_config: TELEOP_CONFIG | None = None
+
+    def __post_init__(self):
+        if self.robot_control_mode not in ["joint_abs", "task_abs"]:
+            raise ValueError(
+                f"Unavailable robot control mode {self.robot_control_mode}")
+
+
 @dataclass
 class TASK_CONFIG:
     name: str = "base"
@@ -189,7 +201,7 @@ class TASK_CONFIG:
     model_config: MODEL_CONFIG | None = field(default_factory=MODEL_CONFIG)
     data_config: DATA_CONFIG | None = field(default_factory=DATA_CONFIG)
     extra_config: EXTRA_CONFIG = field(default_factory=EXTRA_CONFIG)
-    teleop_config: TELEOP_CONFIG = field(default_factory=TELEOP_CONFIG)
+    control_config: CONTROL_CONFIG = field(default_factory=CONTROL_CONFIG)
     
     def __post_init__(self):
         assert self.camera_config is not None, \

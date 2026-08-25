@@ -39,6 +39,8 @@ class CollectionFallbackTest(unittest.TestCase):
         scheduler.device_output_mode = "task_abs"
         scheduler.control_mode = "joint_abs"
         scheduler.ik_type = "pink"
+        scheduler.teleop_config = SimpleNamespace(
+            lock_non_selected_joints=True)
         scheduler._collection_triggered = True
         scheduler._collection_error = None
 
@@ -64,7 +66,6 @@ class CollectionFallbackTest(unittest.TestCase):
         scheduler.task_config = SimpleNamespace(
             extra_config=SimpleNamespace(
                 control_post_process_fn=lambda command: command),
-            teleop_config=SimpleNamespace(lock_non_selected_joints=True),
         )
         scheduler.config = SimpleNamespace(
             data_to_collect={"control": ["joint_abs_control"]})

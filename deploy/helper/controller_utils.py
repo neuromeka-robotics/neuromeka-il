@@ -64,7 +64,7 @@ class Controller:
         self.task_config.extra_config.finish_movement_fn(self, **kwargs)
 
     def exec_enable_compliance(self):
-        compliance = self.task_config.teleop_config.compliance
+        compliance = self.task_config.control_config.compliance
         if compliance.enable:
             for robot_id in self.robot_ids:
                 self.set_compliance(
@@ -74,7 +74,7 @@ class Controller:
                 )
 
     def exec_disable_compliance(self):
-        compliance = self.task_config.teleop_config.compliance
+        compliance = self.task_config.control_config.compliance
         if compliance.enable:
             for robot_id in self.robot_ids:
                 self.set_compliance(
@@ -146,6 +146,12 @@ class Controller:
                        arm_index: int | Dict[int, int] | None = None):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
 
+        resolved_arm_index = arm_index
+        if resolved_arm_index is None:
+            teleop_config = self.task_config.control_config.teleop_config
+            resolved_arm_index = (
+                0 if teleop_config is None else teleop_config.arm_index)
+
         soft_stop_start = time.time()
 
         while time.time() - soft_stop_start < 0.2:
@@ -156,9 +162,7 @@ class Controller:
                 mode=mode,
                 vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
                 acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
-                arm_index=(
-                    self.task_config.teleop_config.arm_index
-                    if arm_index is None else arm_index)
+                arm_index=resolved_arm_index,
             )
 
             soft_stop_control_end = time.time()
@@ -282,11 +286,11 @@ class Base_NN_controller(Controller):
     def exec_nn_control_stop(self):
         raise NotImplementedError
     
-    def exec_start_movement(self):
+    def exec_start_movement(self, **kwargs):
         #######################################################################
         # Define process to run BEFORE main controller execution in config.py #
         #######################################################################
-        self.task_config.extra_config.start_movement_fn(self)
+        self.task_config.extra_config.start_movement_fn(self, **kwargs)
         return NN_CONTROL_STATE.TASK_IN_PROGRESS
         
     def exec_finish_movement(self):

@@ -20,20 +20,24 @@ class DataCollectorConfig:
     data_to_collect_once: List[str] # Data that needs to be collected only once per episode
 
     def __post_init__(self):
+        if self.task_config.control_config.teleop_config is None:
+            raise ValueError(
+                "Data collection requires control_config.teleop_config")
         expected_control = (
-            f"{self.task_config.teleop_config.robot_control_mode}_control")
+            f"{self.task_config.control_config.robot_control_mode}_control")
         configured_controls = self.data_to_collect.get("control", [])
         if expected_control not in configured_controls:
             raise ValueError(
                 "data_to_collect['control'] must explicitly contain "
                 f"'{expected_control}' for robot_control_mode="
-                f"'{self.task_config.teleop_config.robot_control_mode}'")
+                f"'{self.task_config.control_config.robot_control_mode}'")
         wrong_control = (
             "task_abs_control" if expected_control == "joint_abs_control"
             else "joint_abs_control")
         assert wrong_control not in configured_controls, (
             f"data_to_collect['control'] contains '{wrong_control}' but "
-            f"robot_control_mode is '{self.task_config.teleop_config.robot_control_mode}'. "
+            "robot_control_mode is "
+            f"'{self.task_config.control_config.robot_control_mode}'. "
             f"Remove '{wrong_control}' from the control list.")
 
 CONFIGS = {
@@ -124,44 +128,22 @@ CONFIGS = {
                 home_movement_fn = default_home_movement,
                 #control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 47.355045}, "y": {"min": -624.91986, "max": -544.72253}, "x": {"min": 243.68747, "max": 459.47855}})
             ),
-            teleop_config = TELEOP_CONFIG(
-                # arm_index controls which arm chain each teleop device drives.
-                # It supports three setups:
-                #
-                # 1) Single robot, single arm, single device  (int)
-                #    arm_index = 1
-                #    One VIVE / SpaceMouse controls robot 0, left arm.
-                #
-                # 2) Single robot (e.g. humanoid), dual arm, two devices  (List[int])
-                #    arm_index = [1, 2]
-                #    Device 0 -> left arm (1), device 1 -> right arm (2).
-                #    joint_abs : Pink solves BOTH arms in ONE call using two
-                #                FrameTasks.  The resulting q18 is converted to
-                #                q22 and sent as a single move_telej_abs.
-                #                lock_non_selected_joints=True freezes the head
-                #                and torso; False lets Pink move the torso to
-                #                help both arms reach their targets.
-                #                STEP IK is NOT supported for this case.
-                #    task_abs  : two separate task commands (move_telel_abs),
-                #                one per arm, are sent to the same robot.
-                #                No IK involved.
-                #
-                # 3) Two robots, one arm each, two devices  (Dict[int, int])
-                #    arm_index = {0: 0, 1: 0}
-                #    Robot 0 -> 0 index arm, robot 1 -> 0 index arm.
-                #    Each robot receives its own independent command.
-                #
-                arm_index = [1, 2],  # 0: head, 1: left arm, 2: right arm
+            control_config = CONTROL_CONFIG(
                 robot_control_mode = "joint_abs",
-                ik_type = "pink",  # "step" or "pink"
-                pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
-                # Used only for task_abs device -> Pink IK -> joint_abs robot.
-                # True locks every chain except the selected arm/head.
-                # STEP IK does not support locking, so this must then be False.
-                lock_non_selected_joints = True,
                 compliance = COMPLIANCE_CONFIG(
                     enable = True,
                     stiffness = [100] * 22,
+                ),
+                teleop_config = TELEOP_CONFIG(
+                    # arm_index supports one arm (int), one humanoid's dual
+                    # arms (List[int]), or multiple robots (Dict[int, int]).
+                    # Dual-arm joint_abs teleop requires Pink IK because STEP
+                    # cannot solve both arms simultaneously.
+                    arm_index = [1, 2],
+                    ik_type = "pink",
+                    pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
+                    # Freeze every chain outside the selected arms.
+                    lock_non_selected_joints = True,
                 ),
             ),
         ),
@@ -179,7 +161,7 @@ CONFIGS = {
             "camera": {
                 "wrist": ["rgb", "intrinsics"],
             },
-            # This must match teleop_config.robot_control_mode above.
+            # This must match control_config.robot_control_mode above.
             "control": ["joint_abs_control"],
             # "control": ["joint_abs_control", "gripper_command"]
             #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],

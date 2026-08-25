@@ -280,7 +280,11 @@ def print_result(R_RV: np.ndarray, diagnostics: dict) -> np.ndarray:
 def main() -> None:
     args = build_arg_parser().parse_args()
     config = load_config()
-    teleop_config = config.task_config.teleop_config
+    control_config = config.task_config.control_config
+    teleop_config = control_config.teleop_config
+    if teleop_config is None:
+        raise ValueError(
+            "VIVE calibration requires control_config.teleop_config")
     arm_index = teleop_config.arm_index
     if isinstance(arm_index, dict):
         arm_index = arm_index[config.robot_config.robot_ids[0]]
@@ -310,7 +314,7 @@ def main() -> None:
         trajectory=trajectory,
         control_dt=control_dt,
         arm_index=arm_index,
-        compliance=teleop_config.compliance,
+        compliance=control_config.compliance,
     )
     print("Collected valid paired samples: %d" % len(samples))
     if len(samples) < 3:

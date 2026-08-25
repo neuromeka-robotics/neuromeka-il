@@ -228,7 +228,7 @@ class NN_controller(Controller):
             self._check_start_position()
 
             compliance_attempted = (
-                self.task_config.teleop_config.compliance.enable)
+                self.task_config.control_config.compliance.enable)
             if compliance_attempted:
                 self.exec_enable_compliance()
 

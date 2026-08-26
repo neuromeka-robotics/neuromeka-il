@@ -79,7 +79,7 @@ def transform_from_position_rpy(
 
 
 class MoveBoxObservationBuilder:
-    """Stateful joint/action history with the same timing as the simulator."""
+    """Build the 51-D observation expected by the exported move-box policy."""
 
     def __init__(self) -> None:
         self.num_actions = len(POLICY_ACTION_JOINT_NAMES)
@@ -321,7 +321,7 @@ class NN_policy(Empty_NN_policy):
             current_qpos_deg=qpos_deg,
             home_qpos_deg=self.home_qpos_deg,
         )
-        self.observation_builder.advance_action(policy_action)
+        # self.observation_builder.advance_action(policy_action)
         return {
             "action": policy_action,
             "robot_action_0": robot_command,

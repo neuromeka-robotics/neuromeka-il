@@ -68,7 +68,7 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         # Robot-base-frame policy exported from the move-box training run.
         model_dir=str(
             _WORKSPACE_ROOT
-            / "nrmk-genesis/logs/eir-move-box/20260825-182658"
+            / "nrmk-genesis/logs/eir-move-box/20260826-105628"
         ),
         model_file="model_400.onnx",
         device="cuda",
@@ -157,11 +157,12 @@ POLICY_ROBOT_JOINT_INDICES = tuple(
     ROBOT_JOINT_INDEX[name] for name in POLICY_ACTION_JOINT_NAMES
 )
 
-JOINT_POSITION_HISTORY_LENGTH = 10
+JOINT_POSITION_HISTORY_LENGTH = 1
 
-# Current 177-D policy input: current box pose (9), 10 x joint position (140),
-# previous action (14), and action t-2 (14). These legacy target values are
-# retained so a target-conditioned checkpoint can be restored if needed.
+# The exported model still has a 51-D input: current box pose (9), current
+# joint position (14), and two unused action-observation slots (28). The
+# simulator did not write those final slots during training, so deployment
+# explicitly fills them with zeros.
 TARGET_BOX_POSITION_BASE_M = (0.6, 0.0, 1.2245)
 TARGET_BOX_RPY_RAD = (0.0, 0.0, 0.0)
 

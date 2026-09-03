@@ -10,12 +10,21 @@ from perception.aruco_box_pose import (
     ArucoBoxConfig,
     ArucoBoxPoseEstimator,
     PsfCameraCalibration,
+    marker_face_label,
     robot_pose_command_to_transform,
     tissue_box_aruco_config,
 )
 
 
 class ArucoBoxPoseEstimatorTest(unittest.TestCase):
+    def test_tissue_box_marker_face_labels(self):
+        marker_poses = tissue_box_aruco_config().marker_poses
+
+        self.assertEqual(marker_face_label(marker_poses[0]), "FRONT (-Y)")
+        self.assertEqual(marker_face_label(marker_poses[1]), "LEFT (-X)")
+        self.assertEqual(marker_face_label(marker_poses[2]), "TOP (+Z)")
+        self.assertEqual(marker_face_label(marker_poses[3]), "RIGHT (+X)")
+
     def test_detection_path_estimates_marker_pose_with_solve_pnp(self):
         estimator = ArucoBoxPoseEstimator(
             {

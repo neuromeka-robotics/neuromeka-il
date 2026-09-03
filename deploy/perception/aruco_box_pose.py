@@ -120,6 +120,24 @@ class ArucoBoxDetection:
     tvecs: np.ndarray
 
 
+def marker_face_label(marker_pose: MarkerPose) -> str:
+    """Describe the box face containing a marker from its configured position."""
+
+    axis_index = int(np.argmax(np.abs(marker_pose.position_m)))
+    axis_value = marker_pose.position_m[axis_index]
+    axis_name = "XYZ"[axis_index]
+    sign = "+" if axis_value >= 0.0 else "-"
+    semantic_name = {
+        (0, -1): "LEFT",
+        (0, 1): "RIGHT",
+        (1, -1): "FRONT",
+        (1, 1): "BACK",
+        (2, -1): "BOTTOM",
+        (2, 1): "TOP",
+    }[(axis_index, 1 if axis_value >= 0.0 else -1)]
+    return f"{semantic_name} ({sign}{axis_name})"
+
+
 class ArucoBoxPoseEstimator:
     """Fuse known ArUco marker poses into a box pose in the camera frame.
 
@@ -650,6 +668,29 @@ def _run_live_demo(args: argparse.Namespace) -> None:
                 estimator.draw_detection(
                     frame, detection, camera_matrix, dist_coeffs
                 )
+                marker_descriptions = []
+                for marker_id_raw, marker_corners in zip(
+                    detection.marker_ids.reshape(-1), detection.corners
+                ):
+                    marker_id = int(marker_id_raw)
+                    marker_pose = box_config.marker_poses.get(marker_id)
+                    if marker_pose is None:
+                        continue
+                    face_label = marker_face_label(marker_pose)
+                    marker_descriptions.append(f"{marker_id}:{face_label}")
+                    center = np.rint(
+                        np.asarray(marker_corners).reshape(-1, 2).mean(axis=0)
+                    ).astype(int)
+                    cv.putText(
+                        frame,
+                        f"ID {marker_id} {face_label}",
+                        (int(center[0]) + 10, int(center[1]) - 10),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.65,
+                        (0, 255, 255),
+                        2,
+                        cv.LINE_AA,
+                    )
                 transform_camera_box = detection.pose_camera_box
                 if args.frame == "camera":
                     display_pose = cv_to_open3d @ transform_camera_box
@@ -675,6 +716,16 @@ def _run_live_demo(args: argparse.Namespace) -> None:
                     cv.FONT_HERSHEY_SIMPLEX,
                     0.9,
                     (0, 255, 0),
+                    2,
+                    cv.LINE_AA,
+                )
+                cv.putText(
+                    frame,
+                    "markers: " + ", ".join(marker_descriptions),
+                    (20, 75),
+                    cv.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0, 255, 255),
                     2,
                     cv.LINE_AA,
                 )

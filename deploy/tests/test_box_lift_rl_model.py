@@ -34,26 +34,29 @@ class MoveBoxObservationBuilderTest(unittest.TestCase):
         )
         np.testing.assert_array_equal(observation[23:], 0.0)
 
-    def test_unused_action_observation_slots_remain_zero(self):
+    def test_action_history_matches_training_observation_layout(self):
         builder = MoveBoxObservationBuilder()
+        first_action = np.arange(14, dtype=np.float32)
+        second_action = first_action + 20.0
 
-        builder.build(np.eye(4), np.arange(22, dtype=np.float64))
-        observation = builder.build(np.eye(4), np.zeros(22))
+        builder.advance_action(first_action)
+        first_observation = builder.build(np.eye(4), np.zeros(22))
+        builder.advance_action(second_action)
+        second_observation = builder.build(np.eye(4), np.zeros(22))
 
-        np.testing.assert_array_equal(observation[23:], 0.0)
-
-    def test_action_history_can_be_enabled_for_future_models(self):
-        builder = MoveBoxObservationBuilder()
-        action = np.arange(14, dtype=np.float32)
-
-        builder.advance_action(action)
-        observation = builder.build(np.eye(4), np.zeros(22))
-
-        np.testing.assert_array_equal(observation[23:37], action)
-        np.testing.assert_array_equal(observation[37:51], 0.0)
+        np.testing.assert_array_equal(first_observation[23:37], first_action)
+        np.testing.assert_array_equal(first_observation[37:51], 0.0)
+        np.testing.assert_array_equal(second_observation[23:37], second_action)
+        np.testing.assert_array_equal(second_observation[37:51], first_action)
 
 
 class MoveBoxActionConversionTest(unittest.TestCase):
+    def test_action_scales_match_saved_training_configuration(self):
+        np.testing.assert_array_equal(
+            POLICY_ACTION_SCALES_RAD,
+            np.full(14, 0.02),
+        )
+
     def test_relative_policy_action_maps_to_robot_q22_degrees(self):
         current_qpos_deg = np.arange(22, dtype=np.float64)
         home_qpos_deg = np.full(22, -100.0)

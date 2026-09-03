@@ -68,9 +68,9 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         # Robot-base-frame policy exported from the move-box training run.
         model_dir=str(
             _WORKSPACE_ROOT
-            / "nrmk-genesis/logs/eir-move-box/20260826-105628"
+            / "nrmk-genesis/logs/eir-move-box/20260902-164850"
         ),
-        model_file="model_400.onnx",
+        model_file="model_2150.onnx",
         device="cuda",
     ),
     data_config=None,
@@ -107,8 +107,8 @@ PSF_CAMERA_CALIBRATION_PATH = Path(
     "/opt/neuromeka/psf/calib_results/Thc_EIR8_260810.json"
 )
 
-# Exact actor action order from experiments/move_box/conf/train.yaml.
-# Note: Joint_L0 is locked in the current model (14 actuated DOFs).
+# Exact actor action order from the saved 20260902-164850 training config.
+# Joint_L0, the torso joints, and the grippers are locked (14 actuated DOFs).
 POLICY_ACTION_JOINT_NAMES = (
     "Joint_L2_R", "Joint_L2_L",
     "Joint_L3_R", "Joint_L3_L",
@@ -119,13 +119,13 @@ POLICY_ACTION_JOINT_NAMES = (
     "Joint_L8_R", "Joint_L8_L",
 )
 POLICY_ACTION_SCALES_RAD = (
-    0.2, 0.2,
-    0.2, 0.2,
-    0.2, 0.2,
-    0.2, 0.2,
-    0.2, 0.2,
-    0.1, 0.1,
-    0.1, 0.1,
+    0.02, 0.02,
+    0.02, 0.02,
+    0.02, 0.02,
+    0.02, 0.02,
+    0.02, 0.02,
+    0.02, 0.02,
+    0.02, 0.02,
 )
 
 # Fixed 18-joint order returned by the EIR DCP API. Keep this local so the
@@ -159,21 +159,16 @@ POLICY_ROBOT_JOINT_INDICES = tuple(
 
 JOINT_POSITION_HISTORY_LENGTH = 1
 
-# The exported model still has a 51-D input: current box pose (9), current
-# joint position (14), and two unused action-observation slots (28). The
-# simulator did not write those final slots during training, so deployment
-# explicitly fills them with zeros.
-TARGET_BOX_POSITION_BASE_M = (0.6, 0.0, 1.2245)
-TARGET_BOX_RPY_RAD = (0.0, 0.0, 0.0)
+# The exported model has a 51-D input: current box pose (9), current joint
+# position (14), previous action (14), and action-before-previous (14).
 
 START_POSITION_TOLERANCE_DEG = 0.5
 MAX_CONSECUTIVE_BOX_POSE_MISSES = 10
 
-# Reject, rather than clip, unexpectedly large one-cycle policy targets. This
-# leaves the training action contract unchanged while preventing an unsafe
-# command from reaching the real robot. A unit policy action on a 0.2 scale is
-# about 11.46 degrees, so 15 degrees admits the nominal training range.
-MAX_JOINT_TARGET_STEP_DEG = 30.0
+# Clamp unexpectedly large one-cycle policy targets before they reach the real
+# robot. With the training scale of 0.02 rad, a unit policy action requests a
+# target 1.15 degrees from the measured joint.
+MAX_JOINT_TARGET_STEP_DEG = 50.0
 
 ONNX_INPUT_NAME = "obs"
 ONNX_OUTPUT_NAME = "actions"

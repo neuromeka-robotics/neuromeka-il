@@ -20,8 +20,6 @@ from .config import (
     POLICY_ACTION_JOINT_NAMES,
     POLICY_ACTION_SCALES_RAD,
     POLICY_ROBOT_JOINT_INDICES,
-    TARGET_BOX_POSITION_BASE_M,
-    TARGET_BOX_RPY_RAD,
 )
 
 
@@ -83,11 +81,6 @@ class MoveBoxObservationBuilder:
 
     def __init__(self) -> None:
         self.num_actions = len(POLICY_ACTION_JOINT_NAMES)
-        self.target_box_pose_observation = pose_observation(
-            transform_from_position_rpy(
-                TARGET_BOX_POSITION_BASE_M, TARGET_BOX_RPY_RAD
-            )
-        )
         self.reset()
 
     def reset(self) -> None:
@@ -118,7 +111,6 @@ class MoveBoxObservationBuilder:
 
         observation_parts = [
             pose_observation(transform_base_box),
-            # self.target_box_pose_observation,
             self.joint_position_history.reshape(-1),
             self.last_action,
             self.last_last_action,
@@ -321,7 +313,7 @@ class NN_policy(Empty_NN_policy):
             current_qpos_deg=qpos_deg,
             home_qpos_deg=self.home_qpos_deg,
         )
-        # self.observation_builder.advance_action(policy_action)
+        self.observation_builder.advance_action(policy_action)
         return {
             "action": policy_action,
             "robot_action_0": robot_command,

@@ -30,11 +30,16 @@ from .config import (
     CUSTOM_ROBOT_CONFIG,
     CUSTOM_TASK_CONFIG,
     MAX_CONSECUTIVE_BOX_POSE_MISSES,
+    PLOT_AVERAGE_ABS_JOINT_VELOCITY,
+    POLICY_DEPLOYMENT_RECORD_DIR,
+    POLICY_ROBOT_JOINT_INDICES,
     PSF_CAMERA_CALIBRATION_PATH,
+    RECORD_POLICY_DEPLOYMENT,
     START_POSITION_TOLERANCE_DEG,
     VISUALIZE,
 )
 from .model import NN_policy, rotation_matrix_to_rpy
+from .recording import DeploymentRecorder
 
 
 def _box_pose_visualizer_process(
@@ -110,6 +115,137 @@ class _BoxPoseVisualizer:
         self._process = None
 
 
+def _joint_velocity_plotter_process(
+    sample_queue: "mp.Queue[tuple[float, float] | None]",
+) -> None:
+    """Plot the mean absolute joint velocity in a separate process."""
+
+    import matplotlib.pyplot as plt
+
+    plt.ion()
+    figure, axes = plt.subplots()
+    (line,) = axes.plot([], [], linewidth=1.5)
+    axes.set_title("Average Absolute Policy-Joint Velocity")
+    axes.set_xlabel("Elapsed time (s)")
+    axes.set_ylabel("Mean |joint velocity| (rad/s)")
+    axes.grid(True, alpha=0.3)
+    figure.tight_layout()
+    figure.show()
+
+    elapsed_times: list[float] = []
+    average_velocities: list[float] = []
+    running = True
+
+    try:
+        while running and plt.fignum_exists(figure.number):
+            samples: list[tuple[float, float]] = []
+            try:
+                sample = sample_queue.get(timeout=0.05)
+            except queue.Empty:
+                sample = None
+            else:
+                if sample is None:
+                    break
+                samples.append(sample)
+
+            while True:
+                try:
+                    sample = sample_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if sample is None:
+                    running = False
+                    break
+                samples.append(sample)
+
+            if samples:
+                elapsed_times.extend(sample[0] for sample in samples)
+                average_velocities.extend(sample[1] for sample in samples)
+                line.set_data(elapsed_times, average_velocities)
+                axes.relim()
+                axes.autoscale_view(scalex=True, scaley=False)
+                maximum_velocity = max(average_velocities)
+                y_margin = max(0.1 * maximum_velocity, 0.01)
+                axes.set_ylim(0.0, maximum_velocity + y_margin)
+
+            figure.canvas.draw_idle()
+            figure.canvas.flush_events()
+    finally:
+        plt.close(figure)
+
+
+class _JointVelocityPlotter:
+    """Non-blocking producer for the live joint-velocity plot."""
+
+    def __init__(self) -> None:
+        self._queue: mp.Queue | None = None
+        self._process: mp.Process | None = None
+
+    def start(self) -> None:
+        if self._process is not None and self._process.is_alive():
+            return
+        # Start each control run with an empty timeline, including after the
+        # user closes a previous plot window before the controller stops.
+        sample_queue: mp.Queue = mp.Queue(maxsize=256)
+        self._queue = sample_queue
+        self._process = mp.Process(
+            target=_joint_velocity_plotter_process,
+            args=(sample_queue,),
+            daemon=True,
+        )
+        self._process.start()
+
+    def update(self, elapsed_time: float, joint_velocity) -> None:
+        sample_queue = self._queue
+        if sample_queue is None:
+            return
+
+        velocity = np.asarray(joint_velocity, dtype=np.float64)
+        if velocity.ndim != 1 or velocity.size == 0:
+            return
+        if not np.all(np.isfinite(velocity)):
+            return
+
+        sample = (
+            float(elapsed_time),
+            float(np.mean(np.abs(np.deg2rad(velocity)))),
+        )
+        try:
+            sample_queue.put_nowait(sample)
+        except queue.Full:
+            try:
+                sample_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                sample_queue.put_nowait(sample)
+            except queue.Full:
+                pass
+
+    def stop(self) -> None:
+        process = self._process
+        sample_queue = self._queue
+        if (
+            process is not None
+            and process.is_alive()
+            and sample_queue is not None
+        ):
+            while True:
+                try:
+                    sample_queue.put_nowait(None)
+                    break
+                except queue.Full:
+                    try:
+                        sample_queue.get_nowait()
+                    except queue.Empty:
+                        break
+            process.join(timeout=2.0)
+        if sample_queue is not None:
+            sample_queue.close()
+        self._process = None
+        self._queue = None
+
+
 class NN_controller(Base_NN_controller):
     """`task_demo.py`-compatible compliant joint controller."""
 
@@ -168,6 +304,11 @@ class NN_controller(Base_NN_controller):
             if VISUALIZE
             else None
         )
+        self._joint_velocity_plotter = (
+            _JointVelocityPlotter()
+            if PLOT_AVERAGE_ABS_JOINT_VELOCITY
+            else None
+        )
 
     def load_policy(self):
         if not isinstance(self.nn_policy, NN_policy):
@@ -192,6 +333,8 @@ class NN_controller(Base_NN_controller):
         self._control_triggered = True
         if self._box_pose_visualizer is not None:
             self._box_pose_visualizer.start()
+        if self._joint_velocity_plotter is not None:
+            self._joint_velocity_plotter.start()
         self._control_thread = Thread(
             target=self._nn_control_fn,
             args=(duration,),
@@ -208,6 +351,8 @@ class NN_controller(Base_NN_controller):
             self._control_thread = None
         if self._box_pose_visualizer is not None:
             self._box_pose_visualizer.stop()
+        if self._joint_velocity_plotter is not None:
+            self._joint_velocity_plotter.stop()
 
     def _check_home_position(self, state: dict) -> None:
         robot_id = self.robot_ids[0]
@@ -271,6 +416,15 @@ class NN_controller(Base_NN_controller):
         teleop_started = False
         last_robot_action = None
         consecutive_pose_misses = 0
+        recorder = (
+            DeploymentRecorder(
+                output_dir=POLICY_DEPLOYMENT_RECORD_DIR,
+                model_path=self.nn_policy.model_path,
+                control_dt=self.robot_config.control_dt,
+            )
+            if RECORD_POLICY_DEPLOYMENT
+            else None
+        )
 
         try:
             initial_state = self.robot[robot_id].get_state()
@@ -292,6 +446,21 @@ class NN_controller(Base_NN_controller):
                 and time.monotonic() - start_time < duration
             ):
                 robot_state = self.robot[robot_id].get_state()
+                elapsed_s = time.monotonic() - start_time
+                if self._joint_velocity_plotter is not None:
+                    joint_velocity = np.asarray(
+                        robot_state.get("qdot", ()), dtype=np.float64
+                    )
+                    if joint_velocity.shape == (22,):
+                        joint_velocity = joint_velocity[
+                            list(POLICY_ROBOT_JOINT_INDICES)
+                        ]
+                    else:
+                        joint_velocity = np.asarray((), dtype=np.float64)
+                    self._joint_velocity_plotter.update(
+                        elapsed_s,
+                        joint_velocity,
+                    )
                 if ROBOT_STATE.in_failure_state(robot_state["op_state"]):
                     self.control_state = NN_CONTROL_STATE.ROBOT_FAIL
                     raise RuntimeError(
@@ -306,17 +475,29 @@ class NN_controller(Base_NN_controller):
                         camera_output, robot_state
                     )
                 )
+                policy_action = None
+                command_q_deg = None
                 if transform_base_box is None:
                     consecutive_pose_misses += 1
                     if (
                         consecutive_pose_misses
-                        > MAX_CONSECUTIVE_BOX_POSE_MISSES
+                        == MAX_CONSECUTIVE_BOX_POSE_MISSES + 1
                     ):
-                        raise RuntimeError(
+                        print(
                             "ArUco box pose was unavailable for "
-                            f"{consecutive_pose_misses} consecutive cycles"
+                            f"{consecutive_pose_misses} consecutive cycles; "
+                            "pausing policy actions until the pose is "
+                            "available again"
                         )
                 else:
+                    if (
+                        consecutive_pose_misses
+                        > MAX_CONSECUTIVE_BOX_POSE_MISSES
+                    ):
+                        print(
+                            "ArUco box pose is available again; resuming "
+                            "policy actions"
+                        )
                     consecutive_pose_misses = 0
                     if self._box_pose_visualizer is not None:
                         self._box_pose_visualizer.update(transform_base_box)
@@ -328,8 +509,20 @@ class NN_controller(Base_NN_controller):
                         qpos_deg=robot_state["q"],
                     )
                     self.control_state = policy_output["control_state"]
+                    policy_action = policy_output["action"]
+                    command_q_deg = policy_output["robot_action_0"]
                     last_robot_action = self._send_joint_command(
-                        policy_output["robot_action_0"]
+                        command_q_deg
+                    )
+
+                if recorder is not None:
+                    recorder.append(
+                        elapsed_s=elapsed_s,
+                        wall_time_s=time.time(),
+                        robot_state=robot_state,
+                        policy_action=policy_action,
+                        command_q_deg=command_q_deg,
+                        box_transform_base=transform_base_box,
                     )
 
                 next_tick += self.robot_config.control_dt
@@ -372,3 +565,12 @@ class NN_controller(Base_NN_controller):
 
             self._control_triggered = False
             self._control_thread = None
+            if recorder is not None:
+                try:
+                    recording_path = recorder.save()
+                    if recording_path is not None:
+                        print(f"Saved policy deployment: {recording_path}")
+                except Exception as exc:
+                    print(f"Failed to save policy deployment: {exc}")
+            if self._joint_velocity_plotter is not None:
+                self._joint_velocity_plotter.stop()

@@ -68,9 +68,11 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         # Robot-base-frame policy exported from the move-box training run.
         model_dir=str(
             _WORKSPACE_ROOT
-            / "nrmk-genesis/logs/eir-move-box/20260902-164850"
+            # / "nrmk-genesis/logs/eir-move-box/20260903-120917"
+            / "nrmk-genesis/logs/eir-move-box/20260903-153650"
         ),
-        model_file="model_2150.onnx",
+        # model_file="model_2000.onnx",
+        model_file="model_1600.onnx",
         device="cuda",
     ),
     data_config=None,
@@ -86,6 +88,12 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
 
 
 VISUALIZE = False
+# Plot mean(abs(qdot)) in rad/s for the 14 policy-actuated joints.
+PLOT_AVERAGE_ABS_JOINT_VELOCITY = True
+RECORD_POLICY_DEPLOYMENT = True
+POLICY_DEPLOYMENT_RECORD_DIR = (
+    Path(__file__).resolve().parents[3] / "logs/box_lift_rl"
+)
 
 # The real-world ArUco box estimator defines x=long (0.307 m) and y=short
 # (0.153 m), but the Genesis sim box defines x=short (~0.15 m) and y=long

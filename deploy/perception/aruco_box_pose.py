@@ -404,8 +404,20 @@ def tissue_box_aruco_config() -> ArucoBoxConfig:
     return ArucoBoxConfig(
         marker_length_m=0.09,
         box_size_m=(width, length, height),
-        translation_smoothing_alpha=0.25,
-        rotation_smoothing_alpha=0.15,
+        detector_parameters={
+            "adaptiveThreshWinSizeMin": 3,
+            "adaptiveThreshWinSizeMax": 35,
+            "adaptiveThreshWinSizeStep": 4,
+            "polygonalApproxAccuracyRate": 0.05,
+            "minMarkerPerimeterRate": 0.02,
+            "cornerRefinementMethod": cv.aruco.CORNER_REFINE_SUBPIX,
+            "cornerRefinementWinSize": 5,
+            "errorCorrectionRate": 0.7,
+        },
+        # translation_smoothing_alpha=0.25,
+        # rotation_smoothing_alpha=0.15,
+        translation_smoothing_alpha=1.0,
+        rotation_smoothing_alpha=1.0,
         marker_poses={
             0: {
                 "position_m": [0.0, -length / 2.0, 0.0],
@@ -615,6 +627,26 @@ def _run_live_demo(args: argparse.Namespace) -> None:
         rs.stream.color, args.width, args.height, rs.format.bgr8, args.fps
     )
     profile = pipeline.start(stream_config)
+    if args.exposure is not None:
+        color_sensor = next(
+            (
+                sensor
+                for sensor in profile.get_device().query_sensors()
+                if sensor.supports(rs.option.exposure)
+                and any(
+                    stream.stream_type() == rs.stream.color
+                    for stream in sensor.get_stream_profiles()
+                )
+            ),
+            None,
+        )
+        if color_sensor is None:
+            raise RuntimeError("The RealSense color sensor does not support exposure")
+        if color_sensor.supports(rs.option.enable_auto_exposure):
+            color_sensor.set_option(rs.option.enable_auto_exposure, 0.0)
+        color_sensor.set_option(rs.option.exposure, args.exposure)
+        applied_exposure = color_sensor.get_option(rs.option.exposure)
+        print(f"RealSense color exposure: {applied_exposure:g}")
     color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
     intrinsics_raw = color_profile.get_intrinsics()
     camera_matrix = np.array(
@@ -759,6 +791,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument(
+        "--exposure",
+        type=float,
+        help="Manual RealSense color exposure (sensor-specific units)",
+    )
     parser.add_argument(
         "--calibration",
         help="PSF Tbc/Thc/Tec calibration JSON (required for the robot demo)",

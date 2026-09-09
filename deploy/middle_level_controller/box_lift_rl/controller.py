@@ -267,11 +267,19 @@ class NN_controller(Base_NN_controller):
                 self.camera[CAMERA_NAME].start()
         else:
             camera_config = self.task_config.camera_config.cam_params[CAMERA_NAME]
+            camera_fps = camera_config.get("fps", 60)
+            if camera_fps <= 0:
+                raise ValueError("Camera FPS must be positive")
             self.camera[CAMERA_NAME] = RealsenseCamHandler(
                 serial_number=camera_config["serial"],
-                align=True,
+                align=False,
                 clipping_distance_m=1.0,
+                dt=1.0 / camera_fps,
                 exposure=camera_config.get("exposure"),
+                width=camera_config.get("width", 640),
+                height=camera_config.get("height", 480),
+                fps=camera_fps,
+                enable_depth=camera_config.get("enable_depth", False),
             )
             self.camera[CAMERA_NAME].start()
 
@@ -478,6 +486,7 @@ class NN_controller(Base_NN_controller):
                 policy_action = None
                 command_q_deg = None
                 if transform_base_box is None:
+                    self.nn_policy.record_joint_position(robot_state["q"])
                     consecutive_pose_misses += 1
                     if (
                         consecutive_pose_misses

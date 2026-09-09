@@ -44,8 +44,8 @@ CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
             "control": {
                 "vel_scale": 1.0,
                 "acc_scale": 10.0,
-                "move_vel_scale": 10.0,
-                "move_acc_scale": 10.0,
+                "move_vel_scale": 70.0,
+                "move_acc_scale": 70.0,
             },
             "init_kwargs": {},
         }
@@ -60,6 +60,10 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
             "head": {
                 "serial": "254622075364",
                 "enable_depth": False,
+                "width": 960,
+                "height": 540,
+                "fps": 60,
+                "exposure": 150,
             }
         }
     ),
@@ -68,11 +72,9 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
         # Robot-base-frame policy exported from the move-box training run.
         model_dir=str(
             _WORKSPACE_ROOT
-            # / "nrmk-genesis/logs/eir-move-box/20260903-120917"
-            / "nrmk-genesis/logs/eir-move-box/20260903-153650"
+            / "nrmk-genesis/logs/eir-move-box/20260908-182327"
         ),
-        # model_file="model_2000.onnx",
-        model_file="model_1600.onnx",
+        model_file="model_1400.onnx",
         device="cuda",
     ),
     data_config=None,
@@ -89,8 +91,8 @@ CUSTOM_TASK_CONFIG = TASK_CONFIG(
 
 VISUALIZE = False
 # Plot mean(abs(qdot)) in rad/s for the 14 policy-actuated joints.
-PLOT_AVERAGE_ABS_JOINT_VELOCITY = True
-RECORD_POLICY_DEPLOYMENT = True
+PLOT_AVERAGE_ABS_JOINT_VELOCITY = False
+RECORD_POLICY_DEPLOYMENT = False
 POLICY_DEPLOYMENT_RECORD_DIR = (
     Path(__file__).resolve().parents[3] / "logs/box_lift_rl"
 )
@@ -115,7 +117,7 @@ PSF_CAMERA_CALIBRATION_PATH = Path(
     "/opt/neuromeka/psf/calib_results/Thc_EIR8_260810.json"
 )
 
-# Exact actor action order from the saved 20260902-164850 training config.
+# Exact actor action order from the saved 20260908-144729 training config.
 # Joint_L0, the torso joints, and the grippers are locked (14 actuated DOFs).
 POLICY_ACTION_JOINT_NAMES = (
     "Joint_L2_R", "Joint_L2_L",
@@ -165,10 +167,11 @@ POLICY_ROBOT_JOINT_INDICES = tuple(
     ROBOT_JOINT_INDEX[name] for name in POLICY_ACTION_JOINT_NAMES
 )
 
-JOINT_POSITION_HISTORY_LENGTH = 1
+JOINT_POSITION_HISTORY_OFFSETS_S = (0.0, 0.1, 0.2)
+JOINT_POSITION_HISTORY_LENGTH = len(JOINT_POSITION_HISTORY_OFFSETS_S)
 
-# The exported model has a 51-D input: current box pose (9), current joint
-# position (14), previous action (14), and action-before-previous (14).
+# The exported model has a 65-D input: current box pose (9), joint positions
+# at offsets 0.0/0.1/0.2 s (42), and the previous action (14).
 
 START_POSITION_TOLERANCE_DEG = 0.5
 MAX_CONSECUTIVE_BOX_POSE_MISSES = 10

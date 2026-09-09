@@ -3,6 +3,8 @@ import unittest
 import numpy as np
 
 from middle_level_controller.box_lift_rl.config import (
+    JOINT_POSITION_HISTORY_LENGTH,
+    JOINT_POSITION_HISTORY_OFFSETS_S,
     POLICY_ACTION_SCALES_RAD,
     POLICY_ROBOT_JOINT_INDICES,
 )
@@ -14,8 +16,8 @@ from middle_level_controller.box_lift_rl.model import (
 
 
 class MoveBoxObservationBuilderTest(unittest.TestCase):
-    def test_observation_matches_51_dim_exported_model_layout(self):
-        builder = MoveBoxObservationBuilder()
+    def test_observation_matches_65_dim_exported_model_layout(self):
+        builder = MoveBoxObservationBuilder(control_dt=0.05)
         qpos_deg = np.arange(22, dtype=np.float64)
         transform_base_box = transform_from_position_rpy(
             [0.5, -0.1, 1.2], [0.0, 0.0, np.pi / 2.0]
@@ -23,19 +25,44 @@ class MoveBoxObservationBuilderTest(unittest.TestCase):
 
         observation = builder.build(transform_base_box, qpos_deg)
 
-        self.assertEqual(observation.shape, (51,))
+        self.assertEqual(JOINT_POSITION_HISTORY_LENGTH, 3)
+        self.assertEqual(JOINT_POSITION_HISTORY_OFFSETS_S, (0.0, 0.1, 0.2))
+        self.assertEqual(observation.shape, (65,))
         np.testing.assert_allclose(observation[:3], [0.5, -0.1, 1.2])
         np.testing.assert_allclose(
             observation[3:9], [0.0, 1.0, 0.0, 1.0, 1.0, 0.0], atol=1e-7
         )
-        np.testing.assert_allclose(
-            observation[9:23],
-            np.deg2rad(qpos_deg[list(POLICY_ROBOT_JOINT_INDICES)]),
+        expected_joint_position = np.deg2rad(
+            qpos_deg[list(POLICY_ROBOT_JOINT_INDICES)]
         )
-        np.testing.assert_array_equal(observation[23:], 0.0)
+        for start in (9, 23, 37):
+            np.testing.assert_allclose(
+                observation[start : start + 14], expected_joint_position
+            )
+        np.testing.assert_array_equal(observation[51:], 0.0)
+
+    def test_joint_position_history_matches_training_layout(self):
+        builder = MoveBoxObservationBuilder(control_dt=0.05)
+        qpos_samples = [
+            np.arange(22, dtype=np.float64) + 10.0 * step
+            for step in range(5)
+        ]
+
+        for qpos_deg in qpos_samples:
+            observation = builder.build(np.eye(4), qpos_deg)
+
+        for start, sample_index in zip((9, 23, 37), (4, 2, 0)):
+            np.testing.assert_allclose(
+                observation[start : start + 14],
+                np.deg2rad(
+                    qpos_samples[sample_index][
+                        list(POLICY_ROBOT_JOINT_INDICES)
+                    ]
+                ),
+            )
 
     def test_action_history_matches_training_observation_layout(self):
-        builder = MoveBoxObservationBuilder()
+        builder = MoveBoxObservationBuilder(control_dt=0.05)
         first_action = np.arange(14, dtype=np.float32)
         second_action = first_action + 20.0
 
@@ -44,10 +71,26 @@ class MoveBoxObservationBuilderTest(unittest.TestCase):
         builder.advance_action(second_action)
         second_observation = builder.build(np.eye(4), np.zeros(22))
 
-        np.testing.assert_array_equal(first_observation[23:37], first_action)
-        np.testing.assert_array_equal(first_observation[37:51], 0.0)
-        np.testing.assert_array_equal(second_observation[23:37], second_action)
-        np.testing.assert_array_equal(second_observation[37:51], first_action)
+        np.testing.assert_array_equal(first_observation[51:65], first_action)
+        np.testing.assert_array_equal(second_observation[51:65], second_action)
+
+    def test_joint_history_advances_while_policy_inference_is_skipped(self):
+        builder = MoveBoxObservationBuilder(control_dt=0.05)
+        qpos_samples = [
+            np.full(22, 10.0 * step, dtype=np.float64)
+            for step in range(4)
+        ]
+
+        builder.build(np.eye(4), qpos_samples[0])
+        builder.record_joint_position(qpos_samples[1])
+        builder.record_joint_position(qpos_samples[2])
+        observation = builder.build(np.eye(4), qpos_samples[3])
+
+        for start, sample_index in zip((9, 23, 37), (3, 1, 0)):
+            np.testing.assert_allclose(
+                observation[start : start + 14],
+                np.deg2rad(qpos_samples[sample_index][0]),
+            )
 
 
 class MoveBoxActionConversionTest(unittest.TestCase):

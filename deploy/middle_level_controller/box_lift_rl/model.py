@@ -13,7 +13,7 @@ from helper.controller_utils import Empty_NN_policy
 from helper.extra_utils import NN_CONTROL_STATE
 
 from .config import (
-    JOINT_POSITION_HISTORY_LENGTH,
+    JOINT_POSITION_HISTORY_OFFSETS_S,
     MAX_JOINT_TARGET_STEP_DEG,
     ONNX_INPUT_NAME,
     ONNX_OUTPUT_NAME,
@@ -77,19 +77,26 @@ def transform_from_position_rpy(
 
 
 class MoveBoxObservationBuilder:
-    """Build the 51-D observation expected by the exported move-box policy."""
+    """Build the 65-D observation expected by the exported move-box policy."""
 
-    def __init__(self) -> None:
+    def __init__(self, control_dt: float) -> None:
         self.num_actions = len(POLICY_ACTION_JOINT_NAMES)
+        self.joint_position_history_offsets_steps = tuple(
+            round(offset_s / control_dt)
+            for offset_s in JOINT_POSITION_HISTORY_OFFSETS_S
+        )
+        self.joint_position_history_buffer_length = (
+            max(self.joint_position_history_offsets_steps) + 1
+        )
         self.reset()
 
     def reset(self) -> None:
         self.joint_position_history = np.zeros(
-            (JOINT_POSITION_HISTORY_LENGTH, self.num_actions),
+            (self.joint_position_history_buffer_length, self.num_actions),
             dtype=np.float32,
         )
+        self.joint_position_history_initialized = False
         self.last_action = np.zeros(self.num_actions, dtype=np.float32)
-        self.last_last_action = np.zeros(self.num_actions, dtype=np.float32)
 
     @staticmethod
     def policy_joint_positions_rad(qpos_deg: Sequence[float]) -> np.ndarray:
@@ -103,22 +110,33 @@ class MoveBoxObservationBuilder:
     def build(
         self, transform_base_box: np.ndarray, qpos_deg: Sequence[float]
     ) -> np.ndarray:
-        joint_position = self.policy_joint_positions_rad(qpos_deg)
-        self.joint_position_history = np.roll(
-            self.joint_position_history, shift=-1, axis=0
-        )
-        self.joint_position_history[-1] = joint_position
+        self.record_joint_position(qpos_deg)
+        joint_position_samples = self.joint_position_history[
+            list(self.joint_position_history_offsets_steps)
+        ]
 
         observation_parts = [
             pose_observation(transform_base_box),
-            self.joint_position_history.reshape(-1),
+            joint_position_samples.reshape(-1),
             self.last_action,
-            self.last_last_action,
         ]
         observation = np.concatenate(observation_parts).astype(np.float32)
         if not np.all(np.isfinite(observation)):
             raise ValueError("Policy observation contains NaN or infinite values")
         return observation
+
+    def record_joint_position(self, qpos_deg: Sequence[float]) -> None:
+        """Advance joint history even when a missing box pose skips policy inference."""
+
+        joint_position = self.policy_joint_positions_rad(qpos_deg)
+        if self.joint_position_history_initialized:
+            self.joint_position_history = np.roll(
+                self.joint_position_history, shift=1, axis=0
+            )
+            self.joint_position_history[0] = joint_position
+        else:
+            self.joint_position_history[:] = joint_position
+            self.joint_position_history_initialized = True
 
     def advance_action(self, action: Sequence[float]) -> None:
         action_array = np.asarray(action, dtype=np.float32)
@@ -127,7 +145,6 @@ class MoveBoxObservationBuilder:
                 f"Policy action must have shape ({self.num_actions},), "
                 f"got {action_array.shape}"
             )
-        self.last_last_action[:] = self.last_action
         self.last_action[:] = action_array
 
 
@@ -249,7 +266,9 @@ class NN_policy(Empty_NN_policy):
             buffer_ptr=self.actions.data_ptr(),
         )
 
-        self.observation_builder = MoveBoxObservationBuilder()
+        self.observation_builder = MoveBoxObservationBuilder(
+            control_dt=robot_config.control_dt
+        )
         self.home_qpos_deg = np.asarray(
             robot_config.robot_params[self.robot_id]["home_pos"],
             dtype=np.float64,
@@ -297,6 +316,9 @@ class NN_policy(Empty_NN_policy):
 
     def reset(self) -> None:
         self.observation_builder.reset()
+
+    def record_joint_position(self, qpos_deg: Sequence[float]) -> None:
+        self.observation_builder.record_joint_position(qpos_deg)
 
     def __call__(
         self,

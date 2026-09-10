@@ -7,6 +7,29 @@ from data_collector.device.base import BaseDevice
 from helper.math_utils import TaskControlTransformation
 from helper.extra_utils import ROBOT_CONTROL_MODE
 
+
+class TrackpadButtons:
+    """Latch the clicked region until release so sliding never changes the event."""
+
+    def __init__(self, split=False):
+        self.split = split
+        self.pressed = False
+        self.kind = None
+
+    def read(self, pressed, y):
+        if pressed and not self.pressed:
+            if not self.split or y > 0.3:
+                self.kind = "record"
+            elif y < -0.3:
+                self.kind = "switch"
+            else:
+                self.kind = None
+        elif not pressed:
+            self.kind = None
+        self.pressed = bool(pressed)
+        return self.kind == "record", self.kind == "switch"
+
+
 class Vive(BaseDevice):
     CONTROL_MODE = ROBOT_CONTROL_MODE.TELE_TASK_ABSOLUTE
     
@@ -17,6 +40,7 @@ class Vive(BaseDevice):
     def __init__(self, **kwargs):
         self.device_name = f"controller_{Vive.DEVICE_IDX}"
         self.device_params = kwargs["device_params"]
+        self.trackpad = TrackpadButtons(split=kwargs.get("split_trackpad", False))
         self.control_transform = TaskControlTransformation(
             fixed_robot_to_fixed_device_euler=self.device_params["calib_uvw"],
             tracking_mode=self.device_params.get(
@@ -72,7 +96,8 @@ class Vive(BaseDevice):
         output = dict()
         output["control"] = self.control_transform.apply(
             robot_pose=kwargs["robot_pose"])
-        output["button"] = controller_inputs["trackpad_pressed"]  # Bool
+        output["button"], output["switch_button"] = self.trackpad.read(
+            controller_inputs["trackpad_pressed"], controller_inputs["trackpad_y"])
         output["trigger"] = controller_inputs["trigger"]  # Continuous (0 ~ 1)
         output["valid"] = True  # Bool
         return output

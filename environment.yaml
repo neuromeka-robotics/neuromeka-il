@@ -106,6 +106,7 @@ dependencies:
       - nvidia-nvjitlink-cu12==12.4.127
       - nvidia-nvtx-cu12==12.4.127
       - omegaconf==2.3.0
+      - onnxruntime==1.23.2
       - opencv-python==4.11.0.86
       - openvr==2.12.1401
       - packaging==24.2

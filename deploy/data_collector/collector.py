@@ -103,7 +103,7 @@ class DataCollectionScheduler(Controller):
         self.pink_solvers = {}
         if (self.device_output_mode == "task_abs"
                 and self.control_mode == "joint_abs"
-                and self.ik_type == "pink"):
+                and self.ik_type in ("pink", "rl_constraint")):
             from data_collector.pink_ik import PinkTeleopIK
 
             self.pink_solvers = {
@@ -111,6 +111,15 @@ class DataCollectionScheduler(Controller):
                     self.teleop_config.pink_config_path)
                 for robot_id in self.robot_ids
             }
+        self.rl_constraint = None
+        if self.ik_type == "rl_constraint":
+            if (self.device_output_mode != "task_abs" or self.control_mode != "joint_abs"
+                    or not self.is_multi_arm or len(self.robot_ids) != 1):
+                raise ValueError("rl_constraint requires single-robot dual-arm task-to-joint teleop")
+            from data_collector.rl_constraint import RLConstraintTeleop
+
+            self.rl_constraint = RLConstraintTeleop(
+                self.teleop_config.rl_constraint_model_path, self.robot_config.control_dt)
         
         # set empty variable
         self._collection_triggered = False
@@ -129,7 +138,10 @@ class DataCollectionScheduler(Controller):
 
             self._collection_thread = Thread(target=self._collection_fn, daemon=True)
             self._collection_thread.start()
-            print("Press trackpad to start/stop recording")
+            if self.ik_type == "rl_constraint":
+                print("Upper trackpad: start/stop recording; lower trackpad: switch Pink/RL")
+            else:
+                print("Press trackpad to start/stop recording")
             self._collection_thread.join()
 
             if self._collection_error is not None:
@@ -229,7 +241,10 @@ class DataCollectionScheduler(Controller):
             movement_started = True
 
             prev_button = False
+            prev_switch_button = False
             is_recording = False
+            if self.ik_type == "rl_constraint":
+                self.rl_constraint.reset()
             initial_states = {
                 robot_id: self.robot[robot_id].get_state()
                 for robot_id in self.robot_ids
@@ -297,6 +312,7 @@ class DataCollectionScheduler(Controller):
                     print("Device input lost; ending collection.")
                     break
 
+                recording_started = False
                 if (is_recording and not prev_button
                         and device_data["final_button"]):
                     print("Recording stopped")
@@ -304,7 +320,11 @@ class DataCollectionScheduler(Controller):
 
                 if not prev_button and device_data["final_button"]:
                     print("Recording started")
+                    recording_started = True
                     is_recording = True
+                    if self.ik_type == "rl_constraint":
+                        self.rl_constraint.reset()
+                        print("IK mode: pink")
                     for dev_id in self.data_collector.device_ids:
                         self.data_collector.device[dev_id].reset()
                     device_data = self.data_collector.get_device_input(
@@ -316,12 +336,15 @@ class DataCollectionScheduler(Controller):
                         break
 
                 prev_button = device_data["final_button"]
+                switch_button = device_data.get("final_switch_button", False)
+                switch_requested = switch_button and not prev_switch_button and not recording_started
+                prev_switch_button = switch_button
 
                 if is_recording:
                     if self.is_multi_arm:
                         rid = self.robot_ids[0]
                         if self.control_mode == "joint_abs":
-                            # Single Pink solve for all arms simultaneously.
+                            # Both backends consume the same validated device targets.
                             targets = {}
                             for i, arm_idx in enumerate(self.arm_index):
                                 device_command = (
@@ -332,12 +355,39 @@ class DataCollectionScheduler(Controller):
                                     device_command, arm_index=arm_idx)
                                 targets[arm_idx] = task_cmd
 
-                            result = self.pink_solvers[rid].solve_multi(
-                                targets=targets,
-                                init_jpos=robot_states[rid]["q"],
-                                lock_non_selected_joints=(
-                                    self.teleop_config.lock_non_selected_joints),
-                            )
+                            if self.ik_type == "rl_constraint":
+                                if switch_requested:
+                                    measured_targets = {
+                                        arm: self.robot[rid].get_task_pose(robot_states[rid], arm_index=arm)
+                                        for arm in self.arm_index
+                                    }
+                                    mode = self.rl_constraint.toggle(robot_states[rid]["q"], measured_targets)
+                                    if mode == "pink":
+                                        self._reset_device_references(self.data_collector.device_ids)
+                                        # This tick's device targets were sampled before
+                                        # the reset. Start Pink at the measured poses now;
+                                        # the next device sample establishes fresh anchors.
+                                        targets = measured_targets
+                                        print("VIVE references reset to current robot poses")
+                                    print(f"IK mode: {mode}")
+                                self.rl_constraint.update(targets, robot_states[rid]["q"])
+
+                            use_rl = (self.ik_type == "rl_constraint"
+                                      and self.rl_constraint.active_mode == "rl_constraint")
+                            if use_rl:
+                                q_full = self.rl_constraint.command(
+                                    robot_states[rid]["q"],
+                                    initial_states[rid]["q"] if self.teleop_config.lock_non_selected_joints
+                                    else robot_states[rid]["q"],
+                                )
+                                result = {"success": True, "jpos": q_full[:18]}
+                            else:
+                                result = self.pink_solvers[rid].solve_multi(
+                                    targets=targets,
+                                    init_jpos=robot_states[rid]["q"],
+                                    lock_non_selected_joints=(
+                                        self.teleop_config.lock_non_selected_joints),
+                                )
                             if not result.get("success", False):
                                 error = result.get(
                                     "error", "unknown controller error")
@@ -364,9 +414,16 @@ class DataCollectionScheduler(Controller):
                             dummy_dof = getattr(
                                 self.robot[rid], 'DUMMY_JOINT_DOF', 0)
                             q_full = q18 + [0.] * dummy_dof
-                            value = {
-                                rid: self.robot[rid].validate_joint_command(
-                                    q_full)}
+                            if self.ik_type == "rl_constraint" and self.teleop_config.lock_non_selected_joints:
+                                # Both backends hold the same non-arm command reference.
+                                q_full[:4] = initial_states[rid]["q"][:4]
+                            joint_command = self.robot[rid].validate_joint_command(q_full)
+                            if use_rl and self.teleop_config.rl_constraint_dry_run:
+                                print(f"RL dry run — projected q22 (deg): {joint_command}")
+                                # Keep value as the last command actually sent. Re-send it
+                                # to maintain teleop; recording and soft-stop also use it.
+                            else:
+                                value = {rid: joint_command}
                             gripper_command_val = float(
                                 1. - np.round(device_data[0]["trigger"]))
                             self.robot[rid].tele_move(
@@ -606,6 +663,7 @@ class TeleopDataCollector:
                     from data_collector.device.vive import Vive
                     self.device[device_id] = Vive(
                         device_params=self.task_config.data_config.device_params,
+                        split_trackpad=teleop_config.ik_type == "rl_constraint",
                     )
                 elif self.task_config.data_config.device_type == "spacemouse":
                     from data_collector.device.spacemouse import SpaceMouse
@@ -672,6 +730,7 @@ class TeleopDataCollector:
     def get_device_input(self, robot_references):
         output = dict()
         output["final_button"] = False
+        output["final_switch_button"] = False
         output["final_valid"] = True
 
         for device_id in self.device_ids:
@@ -682,6 +741,8 @@ class TeleopDataCollector:
             )
             output["final_button"] = (
                 output["final_button"] or output[device_id]["button"])
+            output["final_switch_button"] = (
+                output["final_switch_button"] or output[device_id].get("switch_button", False))
             output["final_valid"] = output["final_valid"] and output[device_id]["valid"]
         return output
 

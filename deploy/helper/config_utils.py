@@ -147,6 +147,9 @@ class TELEOP_CONFIG:
     # STEP does not support locking; Pink locks joints inside its optimization.
     ik_type: str = "step"
     pink_config_path: str | None = None
+    rl_constraint_model_path: str | None = None
+    # Print RL projections while sending the last real command; Pink still executes.
+    rl_constraint_dry_run: bool = False
     # During task->joint conversion, keep all joints outside the selected
     # head/arm chain at their current values.
     lock_non_selected_joints: bool = False
@@ -166,7 +169,7 @@ class TELEOP_CONFIG:
         else:
             raise TypeError(
                 "arm_index must be an int, a List[int], or a Dict[int, int]")
-        if self.ik_type not in ["step", "pink"]:
+        if self.ik_type not in ["step", "pink", "rl_constraint"]:
             raise ValueError(f"Unavailable IK type {self.ik_type}")
         if not isinstance(self.lock_non_selected_joints, bool):
             raise TypeError("lock_non_selected_joints must be a bool")
@@ -174,8 +177,15 @@ class TELEOP_CONFIG:
             raise ValueError(
                 "lock_non_selected_joints is unavailable for STEP IK; "
                 "use ik_type='pink' or disable locking")
-        if self.ik_type == "pink" and not self.pink_config_path:
+        if self.ik_type in ("pink", "rl_constraint") and not self.pink_config_path:
             raise ValueError("pink_config_path is required for Pink IK")
+        if self.ik_type == "rl_constraint":
+            if not isinstance(self.rl_constraint_dry_run, bool):
+                raise TypeError("rl_constraint_dry_run must be a bool")
+            if not isinstance(self.arm_index, list) or sorted(self.arm_index) != [1, 2]:
+                raise ValueError("rl_constraint requires dual EIR arms: arm_index=[1, 2]")
+            if not self.rl_constraint_model_path:
+                raise ValueError("rl_constraint_model_path is required for rl_constraint IK")
 
 
 @dataclass

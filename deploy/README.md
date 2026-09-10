@@ -73,7 +73,79 @@ The high-level command is assigned by keyboard. The keyboard commands in the pre
 | 2          |  EXECUTE_START_STATE_COLLECTION  |Collect data after moving to robot home position    |
 | 3          | EXECUTE_CURRENT_STATE_COLLECTION |Collect data from current robot position            |
 
-Teleoperation begins when the "toggle down" button on Vive is clicked once, and ends when it is clicked again. The gripper command is given by pressing the "trigger" button on the back of the Vive controller. When the teleoperation is completed, the user is asked whether or not to save the data. To save, click 's'; to not save, press 'e'.
+With `ik_type="pink"`, click anywhere on the VIVE trackpad to start/stop recording. With `ik_type="rl_constraint"`, use the upper trackpad to start/stop recording and the lower trackpad to switch Pink/RL. The gripper command is given by pressing the trigger on the back of the Vive controller. When teleoperation finishes, press `s` to save or `e` to discard.
+
+### Plane-constraint reflex teleoperation
+
+`lift_box` is configured with `ik_type="rl_constraint"`, loading Pink and
+`data_collector/models/dual_arm_plane_800.onnx` at startup. Run from `deploy`:
+
+```bash
+python collect_data.py lift_box
+```
+
+Press keyboard `2` to prepare collection from home or `3` from the current pose.
+Then use either VIVE controller:
+
+| Trackpad click | Action |
+| --- | --- |
+| Upper (`y > 0.3`) | Start/stop recording |
+| Lower (`y < -0.3`) | Toggle Pink ↔ RL while recording |
+| Center | No action |
+
+Each recording starts in Pink. Release the trackpad between clicks; dragging a
+held click into another region does not generate another action. Every Pink → RL
+switch captures **current measured joints** as the policy's initial-joint reference.
+This is independent of home and recording-start posture. Switching back to Pink
+re-anchors both VIVE controllers to the current measured robot poses. The first
+Pink solve uses those measured poses as targets and the latest measured joints as
+its initial guess, so the old accumulated VIVE targets are not executed. Pink
+needs no background solves. Switching modes keeps recording and policy history
+active; Pink → RL preserves the VIVE anchors.
+
+For the first hardware test, `lift_box` has `rl_constraint_dry_run=True`. Pink
+commands execute normally. In RL mode, each projected q22 command is printed in
+degrees, while the last command actually sent is repeated to hold the existing
+target with compliance enabled. History and RL-entry references still update
+normally. Saved `joint_abs_control_0` and the stopping command use the actual hold
+target, never the printed projection. Set `rl_constraint_dry_run=False` in
+`data_collector/config.py` when ready to execute RL commands.
+
+The policy uses current/previous desired palm poses, ten measured joint-position
+samples at 20 Hz (oldest first), and the RL-entry joint reference: 182 float inputs.
+Joint and desired-pose history update on every recording tick, including Pink ticks,
+and survive all mode switches. History starts filled with the first measured joints.
+The palm material point is recomputed from measured palm orientation at RL entry,
+matching the simulator's episode-initial inner box support point. Both desired
+poses are expressed using that same point and the simulation world translation.
+
+The ONNX actor includes trained observation normalization. Its 14 outputs are
+measured-joint offsets scaled by 0.02 radians and clipped to the training URDF's
+joint limits, then converted to DCP q22 degrees. The exported metadata defines
+joint order, limits, timing, palm geometry and frame conventions. No Genesis,
+RSL-RL, or policy architecture import is needed for this wrapper. It uses the CPU
+provider of `onnxruntime` (tested with 1.23.2), NumPy and SciPy.
+
+Both modes send and save the exact final q22 command as `joint_abs_control_0`.
+With joint locking enabled they share the same non-arm command reference. The
+0.1 s delay modeled in training is not added again to the real control path.
+Contact is inferred from motion history; no contact flag or plane pose is an input,
+and the learned behavior does not enforce an analytical plane constraint.
+
+To export/evaluate another checkpoint, run from `nrmk-genesis`:
+
+```bash
+.venv/bin/python experiments/dual_arm_plane/eval.py \
+  run_name=20260909-182947 checkpoint=model_800.pt \
+  cpu=true viewer=false episodes=1
+```
+
+This exports `model_800.onnx` beside the checkpoint, checks PyTorch/ONNX numerical
+parity, and runs ONNX in simulation. Use `export_only=true` to skip simulation,
+`cpu=false viewer=true` for visual GPU evaluation, or `export_onnx=false` to reuse
+the existing export. Copy the single ONNX file into `data_collector/models/` and
+set `rl_constraint_model_path` in `data_collector/config.py`. Keep `control_dt=0.05`
+for this checkpoint. Set `ik_type="pink"` to use the original whole-trackpad controls.
 
 By default, raw data are stored in `train/data/TASK_NAME` as `*.h5` files, and the corresponding visualizations are saved in `train/data_viz/TASK_NAME`.
 

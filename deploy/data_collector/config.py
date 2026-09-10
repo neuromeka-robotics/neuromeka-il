@@ -10,6 +10,7 @@ ROBOT_INTERFACE_EIR_CONFIG = (
     Path(__file__).resolve().parents[3]
     / "robot_interface/robot_interface/config/eir.yaml"
 )
+RL_CONSTRAINT_MODEL = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260909-185055/model_1350.onnx"
 
 
 @dataclass
@@ -137,11 +138,13 @@ CONFIGS = {
                 teleop_config = TELEOP_CONFIG(
                     # arm_index supports one arm (int), one humanoid's dual
                     # arms (List[int]), or multiple robots (Dict[int, int]).
-                    # Dual-arm joint_abs teleop requires Pink IK because STEP
-                    # cannot solve both arms simultaneously.
+                    # rl_constraint starts each recording in Pink. Upper VIVE
+                    # trackpad clicks record; lower clicks toggle Pink/RL.
                     arm_index = [1, 2],
-                    ik_type = "pink",
+                    ik_type = "rl_constraint",  # "pink" for the original IK-only path
                     pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
+                    rl_constraint_model_path = str(RL_CONSTRAINT_MODEL),
+                    rl_constraint_dry_run = False,  # Print RL commands; execute Pink normally.
                     # Freeze every chain outside the selected arms.
                     lock_non_selected_joints = True,
                 ),

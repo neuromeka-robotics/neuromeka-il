@@ -57,7 +57,7 @@ class BoxLiftOpenLoopTest(unittest.TestCase):
         controller.exec_enable_compliance.assert_called_once_with()
         controller.exec_finish_movement.assert_called_once_with()
 
-    def test_rl_mode_is_fixed_and_observes_compliance_true_for_both_arms(self):
+    def test_rl_observes_free_motion_while_robot_compliance_stays_enabled(self):
         controller = self._controller(np.zeros((4, 22)))
         policy = MagicMock()
         policy.uses_compliant_history = True
@@ -67,6 +67,8 @@ class BoxLiftOpenLoopTest(unittest.TestCase):
 
         with patch("middle_level_controller.box_lift_open_loop.controller.IK_TYPE",
                    "rl_constraint"), \
+                patch("middle_level_controller.box_lift_open_loop.controller.RL_COMPLIANCE_INTERACTIVE", False), \
+                patch("middle_level_controller.box_lift_open_loop.controller.RL_COMPLIANCE_COMMAND", False), \
                 patch("middle_level_controller.box_lift_open_loop.controller.time.sleep"), \
                 patch("builtins.print"):
             controller._open_loop_control_fn(1200.)
@@ -78,7 +80,7 @@ class BoxLiftOpenLoopTest(unittest.TestCase):
         self.assertEqual(policy.command.call_count, 4)
         self.assertEqual(policy.update.call_count, 4)
         for call in policy.update.call_args_list:
-            self.assertEqual(call.kwargs["compliance_mode"], [1., 1.])
+            self.assertEqual(call.kwargs["compliance_mode"], [0., 0.])
         controller.robot[0].get_control_state.assert_not_called()
         controller.robot[0].get_task_pose.assert_not_called()
         for call in policy.update.call_args_list:
@@ -86,6 +88,35 @@ class BoxLiftOpenLoopTest(unittest.TestCase):
             self.assertNotIn("applied_command", call.kwargs)
         modes = [row[48] for row in controller._save_joint_states.call_args.args[0]]
         self.assertEqual(modes, ["rl_constraint"] * 4)
+
+    def test_interactive_command_toggles_at_ticks_and_restarts_enabled(self):
+        controller = self._controller(np.zeros((4, 22)))
+        policy = MagicMock()
+        policy.uses_compliant_history = True
+        policy.observation = SimpleNamespace(mode_dim=2)
+        policy.command.return_value = [1.] * 18 + [0.] * 4
+        controller.rl_constraint = policy
+
+        def switch_after_send(*args):
+            if policy.record_command.call_count in (1, 2, 4):
+                controller.toggle_rl_compliance_command()
+
+        policy.record_command.side_effect = switch_after_send
+        with patch("middle_level_controller.box_lift_open_loop.controller.IK_TYPE", "rl_constraint"), \
+                patch("middle_level_controller.box_lift_open_loop.controller.RL_COMPLIANCE_INTERACTIVE", True), \
+                patch("middle_level_controller.box_lift_open_loop.controller.RL_COMPLIANCE_COMMAND", False), \
+                patch("middle_level_controller.box_lift_open_loop.controller.time.sleep"), \
+                patch("builtins.print"):
+            controller._open_loop_control_fn(1200.)
+            self.assertIsNone(controller._control_error)
+            modes = [call.kwargs["compliance_mode"] for call in policy.update.call_args_list]
+            self.assertEqual(modes, [[1., 1.], [0., 0.], [1., 1.], [1., 1.]])
+            controller._control_triggered = True
+            controller._open_loop_control_fn(1200.)
+        self.assertIsNone(controller._control_error)
+        self.assertEqual(policy.update.call_args_list[4].kwargs["compliance_mode"], [1., 1.])
+        self.assertEqual(policy.toggle.call_count, 2)  # Backend is selected once per run.
+        self.assertEqual(controller.exec_enable_compliance.call_count, 2)
 
 
 if __name__ == "__main__":

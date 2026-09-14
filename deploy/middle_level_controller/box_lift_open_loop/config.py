@@ -29,10 +29,12 @@ CUSTOM_TASK_CONFIG.control_config.robot_control_mode = "joint_abs"
 
 # Select one controller for the complete trajectory.
 IK_TYPE = "rl_constraint"  # "pink" replays recorded commands; "rl_constraint" projects them.
-RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260913-213551/model_1999.onnx"  # Set the NEW exported ONNX path before enabling.
+RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-150210/model_2400.onnx"  # Set the NEW exported ONNX path before enabling.
+# RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-123544/model_1999.onnx"  # Set the NEW exported ONNX path before enabling.
 RL_CONSTRAINT_DRY_RUN = False
-# The policy observes a requested compliance command. It is fixed on for both
-# v3 arm channels (and the single shared v2 channel).
+# Match current training's free_motion_probability=1.0: policy modes are zero.
+# Physical robot compliance remains enabled independently above.
+RL_COMPLIANCE_INTERACTIVE = False
 RL_COMPLIANCE_COMMAND = True
 
 TRAJECTORY_PATH = Path(__file__).with_name("trajectories.csv")

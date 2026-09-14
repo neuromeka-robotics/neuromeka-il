@@ -7,18 +7,20 @@ from helper.controller_utils import Base_NN_controller
 import getch
 from multiprocessing import Process, Queue
 
-def process_input(event_queue):
+def process_input(event_queue, interactive_compliance=False):
     print("Commands:")
     print("0: Stop execution")
     print("1: Move to first task home")
     print("2: Execute first task")
     print("3: Execute start state dagger")
     print("4: Execute current state dagger")
+    if interactive_compliance:
+        print("r: Toggle RL policy compliance command (both arms)")
     print("q: Quit")
     print("Waiting for commands...")
     while True:
         k = getch.getch()
-        if k in ["0", "1", "2", "3", "4", "q"]:
+        if k in ["0", "1", "2", "3", "4", "q"] or (k == "r" and interactive_compliance):
             event_queue.put(k)
             time.sleep(0.01) # Need to sleep to make sure other process can get the input
             if k == "q":
@@ -66,7 +68,8 @@ if __name__ == "__main__":
         data_collection_scheduler = None
 
     event_queue = Queue()
-    p = Process(target=process_input, args=(event_queue,))
+    interactive_compliance = getattr(nn_controller, "interactive_compliance_enabled", False)
+    p = Process(target=process_input, args=(event_queue, interactive_compliance))
     p.start()
 
     while True:
@@ -96,6 +99,8 @@ if __name__ == "__main__":
         elif k == '0':
             print("Stopping execution")
             nn_controller.exec_nn_control_stop()
+        elif k == 'r' and interactive_compliance:
+            nn_controller.toggle_rl_compliance_command()
         elif k == 'q':
             nn_controller.exec_nn_control_stop()
             break

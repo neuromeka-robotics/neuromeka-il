@@ -79,6 +79,29 @@ class CompliantPlaneObservationTest(unittest.TestCase):
         np.testing.assert_array_equal(command[:4], reference[:4])
         np.testing.assert_array_equal(command[18:], 0.)
 
+    def test_current_command_only_layout_with_and_without_explicit_metadata(self):
+        contract = dict(self.contract, joint_pos_history_offsets_steps=[0],
+                        observe_joint_target_error_history=False, num_obs=34)
+        for explicit_flag in (False, True):
+            if explicit_flag:
+                contract["observe_measured_palm_pose_history"] = False
+            builder = CompliantPlaneObservation(contract, .02)
+            for tick in range(3):
+                q = np.arange(22, dtype=float) + tick
+                builder.update(TARGETS, q, compliance_mode=[1., 0.])
+                obs = builder.build()
+                self.assertEqual(obs.shape, (34,))
+                np.testing.assert_allclose(obs[:14], builder.joint_positions(q))
+                np.testing.assert_allclose(
+                    obs[14:32], builder.pose_observation(builder.task_poses(TARGETS)))
+                np.testing.assert_array_equal(obs[-2:], [1., 0.])
+            self.assertFalse(builder.observe_measured)
+
+    def test_explicit_pose_flag_must_match_graph_dimensions(self):
+        contract = dict(self.contract, observe_measured_palm_pose_history=False)
+        with self.assertRaisesRegex(ValueError, "dimensions"):
+            CompliantPlaneObservation(contract, .02)
+
 
 class PlaneObservationTest(unittest.TestCase):
     def setUp(self):

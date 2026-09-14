@@ -65,8 +65,8 @@ CONFIGS = {
                     "control": {
                         "vel_scale": 1.,  # 0 ~ 1
                         "acc_scale": 10.,  # 0 ~ 10
-                        "move_vel_scale": 10.,  # 0 ~ 100
-                        "move_acc_scale": 10.  # 0 ~ 1000
+                        "move_vel_scale": 70.,  # 0 ~ 100
+                        "move_acc_scale": 70.  # 0 ~ 1000
                     },
                     "init_kwargs": {
                         # Uncomment to use force control (Check if your robot supports force control)

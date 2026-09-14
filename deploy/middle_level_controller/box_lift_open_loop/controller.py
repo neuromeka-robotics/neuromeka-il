@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import time
+from queue import Empty, SimpleQueue
 from datetime import datetime
 from pathlib import Path
 from threading import Thread, current_thread
@@ -29,6 +30,7 @@ from .config import (
     RL_CONSTRAINT_MODEL_PATH,
     RL_CONSTRAINT_DRY_RUN,
     RL_COMPLIANCE_COMMAND,
+    RL_COMPLIANCE_INTERACTIVE,
 )
 
 
@@ -53,6 +55,19 @@ class NN_controller(Controller):
         self.pink_solver = None
         self.rl_constraint = None
         self.task_targets = None
+        self._compliance_switches = SimpleQueue()
+
+    @property
+    def interactive_compliance_enabled(self):
+        return (RL_COMPLIANCE_INTERACTIVE and IK_TYPE == "rl_constraint"
+                and self.rl_constraint is not None
+                and self.rl_constraint.uses_compliant_history)
+
+    def toggle_rl_compliance_command(self):
+        if self.interactive_compliance_enabled and self._control_triggered:
+            self._compliance_switches.put(True)
+        else:
+            print("Policy compliance switching is available during interactive RL execution")
 
     @staticmethod
     def _load_trajectory(path: str | Path) -> np.ndarray:
@@ -271,6 +286,8 @@ class NN_controller(Controller):
         last_action = None
         commands_sent = 0
         joint_state_records = []
+        self._compliance_switches = SimpleQueue()
+        compliance_command = True if self.interactive_compliance_enabled else RL_COMPLIANCE_COMMAND
 
         try:
             self._check_start_position()
@@ -284,6 +301,7 @@ class NN_controller(Controller):
             robot = self.robot[robot_id]
             if self.rl_constraint is not None:
                 self.rl_constraint.reset()
+                print(f"RL compliance command: {compliance_command}")
             print(
                 f"IK mode fixed for this run: {IK_TYPE}. "
                 "Robot compliance remains enabled for both arms.")
@@ -305,7 +323,14 @@ class NN_controller(Controller):
                     if index == 0:
                         self.rl_constraint.toggle(state["q"], measured)
                     if self.rl_constraint.uses_compliant_history:
-                        modes = [float(RL_COMPLIANCE_COMMAND)] * self.rl_constraint.observation.mode_dim
+                        while self.interactive_compliance_enabled:
+                            try:
+                                self._compliance_switches.get_nowait()
+                            except Empty:
+                                break
+                            compliance_command = not compliance_command
+                            print(f"RL compliance command: {compliance_command}")
+                        modes = [float(compliance_command)] * self.rl_constraint.observation.mode_dim
                         self.rl_constraint.update(targets, state["q"], measured_targets=measured,
                                                   compliance_mode=modes)
                     else:

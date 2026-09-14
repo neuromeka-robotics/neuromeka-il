@@ -111,7 +111,15 @@ sent is repeated. History still updates, and saved `joint_abs_control_0` contain
 the actual hold target. With `rl_constraint_dry_run=False`, projected commands
 are sent without per-tick printing.
 
-The current `compliant_plane_history_v3` policy runs at 50 Hz. Its default
+The simplified Genesis training configuration uses 34 current-frame inputs:
+14 encoder joints, 18 desired palm-pose values, and two compliance flags.
+It uses offsets `[0]`, no joint-target error, no measured palm pose, and no
+previous actions. Deployment selects this layout from ONNX metadata (or the
+unambiguous input count for Genesis exports missing the measured-pose flag).
+Desired commands are used from the first tick. A newly trained/exported model
+is required; changing training defaults does not convert an existing checkpoint.
+
+The older `compliant_plane_history_v3` policy runs at 50 Hz. Its original
 observation has 25 synchronized history samples of encoder joints, controller
 target error (`last_sent_command - q`), desired palm pose, measured palm pose, and independent
 left/right compliance-mode flags: 1650 floats. Histories use the exact saved
@@ -175,7 +183,12 @@ selects Pink replay or RL projection for the entire run; there is no runtime
 mode switch. The 20 Hz recorded joint commands are held at a 50 Hz loop without
 interpolation. Pink mode therefore sends only exact recorded commands. In RL
 mode, FK of those commands supplies desired TCP history and the policy projects
-the arm joints. Its compliance-command observation is always true for both arms.
+the arm joints. Set `RL_COMPLIANCE_INTERACTIVE=True` to start each run with
+policy compliance `[1, 1]` and press `r` during execution to toggle both channels
+between `[1, 1]` and `[0, 0]`. Each change prints the new command and takes effect
+at a control tick. With the flag false, `RL_COMPLIANCE_COMMAND` supplies the fixed
+value and `r` is disabled. This changes the policy input while the IK backend
+remains selected by `IK_TYPE`.
 Robot compliance is enabled for both modes and remains enabled after the run.
 Set `HOLD_FIRST_TARGET=True` to repeat the first recorded command for the entire
 run as a stationary-target diagnostic.

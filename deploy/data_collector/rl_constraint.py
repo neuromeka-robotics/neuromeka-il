@@ -134,11 +134,17 @@ class CompliantPlaneObservation(PlaneObservation):
         if self.offsets.ndim != 1 or not len(self.offsets) or np.any(self.offsets < 0):
             raise ValueError("Invalid joint history offsets")
         self.observe_error = contract["observe_joint_target_error_history"]
-        self.term_dims = ([14, 14] if self.observe_error else [14]) + [18, 18, self.mode_dim]
         self.include_actions = contract["include_previous_actions"]
         self.include_last_last = contract["include_last_last_action"]
-        self.num_obs = len(self.offsets) * sum(self.term_dims) + (
-            14 * (1 + self.include_last_last) if self.include_actions else 0)
+        self.term_dims = ([14, 14] if self.observe_error else [14]) + [18]
+        action_dims = 14 * (1 + self.include_last_last) if self.include_actions else 0
+        command_only_dims = len(self.offsets) * (sum(self.term_dims) + self.mode_dim) + action_dims
+        # Genesis exports predating this metadata field distinguish the two
+        # layouts unambiguously through num_obs. Explicit metadata takes priority.
+        self.observe_measured = contract.get(
+            "observe_measured_palm_pose_history", contract["num_obs"] != command_only_dims)
+        self.term_dims += ([18] if self.observe_measured else []) + [self.mode_dim]
+        self.num_obs = len(self.offsets) * sum(self.term_dims) + action_dims
         if self.num_obs != contract["num_obs"]:
             raise ValueError("Invalid compliant-plane observation dimensions")
         self.palm_reference = np.asarray(contract["palm_reference_local_m"], dtype=np.float64)
@@ -163,18 +169,21 @@ class CompliantPlaneObservation(PlaneObservation):
         rot6 = rotations.as_matrix()[:, :, :2].transpose(0, 2, 1).reshape(2, 6)
         return np.concatenate((positions, rot6), axis=1).reshape(-1)
 
-    def update(self, targets, q, *, measured_targets, compliance_mode):
+    def update(self, targets, q, *, measured_targets=None, compliance_mode):
         joints = self.joint_positions(q)
-        # Training reset: stationary desired/measured pose and zero target error.
+        # Legacy measured-pose policies start with a stationary reset frame.
+        # Command-only policies consume the supplied desired pose from tick zero.
         if self.frames is None:
-            targets = measured_targets
+            if self.observe_measured:
+                targets = measured_targets
             self.sent_command = np.asarray(q, dtype=np.float64).copy()
         terms = [joints]
         if self.observe_error:
             # Last target actually sent; no DCP qdes or synthetic bias/delay.
             terms.append(self.joint_positions(self.sent_command) - joints)
-        terms.extend((self.pose_observation(self.task_poses(targets)),
-                      self.pose_observation(self.task_poses(measured_targets))))
+        terms.append(self.pose_observation(self.task_poses(targets)))
+        if self.observe_measured:
+            terms.append(self.pose_observation(self.task_poses(measured_targets)))
         modes = np.asarray(compliance_mode, dtype=np.float32)
         if modes.shape != (self.mode_dim,) or not np.isin(modes, (0., 1.)).all():
             raise ValueError(f"Expected {self.mode_dim} binary policy compliance-mode values")
@@ -266,7 +275,7 @@ class RLConstraintTeleop:
 
     def update(self, targets, q, *, measured_targets=None, compliance_mode=None):
         if self.uses_compliant_history:
-            if measured_targets is None:
+            if self.observation.observe_measured and measured_targets is None:
                 raise ValueError("The policy requires local FK gripper-base poses")
             if compliance_mode is None:
                 compliance_mode = [float(self.active_mode == "rl_constraint")] * self.observation.mode_dim

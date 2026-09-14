@@ -41,6 +41,7 @@ def deployment_contract(task, urdf):
         "history_order": "term_major_offset_order",
         "joint_pos_history_offsets_steps": list(cfg.joint_pos_history_offsets_steps),
         "observe_joint_target_error_history": cfg.observe_joint_target_error_history,
+        "observe_measured_palm_pose_history": getattr(cfg, "observe_measured_palm_pose_history", True),
         "include_previous_actions": cfg.include_previous_actions,
         "include_last_last_action": cfg.include_last_last_action,
         "observe_constraint_normal": cfg.observe_constraint_normal,
@@ -51,7 +52,7 @@ def deployment_contract(task, urdf):
         "action_scale": cfg.action_scale,
         "action_semantics": "encoder_joint_delta_rad",
         "palm_reference_local_m": references,
-        "applied_target_source": "controller_qdes",
+        "applied_target_source": "pace_applied_target" if cfg.observe_joint_target_error_history else None,
     }
 
 

@@ -38,7 +38,7 @@ class Robot:
     def get_state(self) -> Dict:
         state = self.robot_client.get_robot_data()
         return state
-    
+
     def get_io_state(self) -> Dict:
         state = self.robot_client.get_io_data()
         return state

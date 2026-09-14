@@ -1,4 +1,4 @@
-"""Stream a recorded humanoid joint trajectory at 20 Hz."""
+"""Follow a fixed CSV trajectory through Pink or the compliant-plane projector."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ import numpy as np
 
 from communication.humanoid import HumanoidRobot
 from communication.robot import Robot
-from data_collector.pink_ik import DCP_ACTIVE_JOINT_NAMES
+from data_collector.pink_ik import DCP_ACTIVE_JOINT_NAMES, PinkTeleopIK
+from data_collector.rl_constraint import RLConstraintTeleop
 from helper.controller_utils import Controller
 
 from .config import (
@@ -22,6 +23,12 @@ from .config import (
     JOINT_STATE_LOG_DIR,
     START_POSITION_TOLERANCE_DEG,
     TRAJECTORY_PATH,
+    TRAJECTORY_DT,
+    HOLD_FIRST_TARGET,
+    IK_TYPE,
+    RL_CONSTRAINT_MODEL_PATH,
+    RL_CONSTRAINT_DRY_RUN,
+    RL_COMPLIANCE_COMMAND,
 )
 
 
@@ -43,6 +50,9 @@ class NN_controller(Controller):
         self._control_triggered = False
         self._control_thread: Thread | None = None
         self._control_error: Exception | None = None
+        self.pink_solver = None
+        self.rl_constraint = None
+        self.task_targets = None
 
     @staticmethod
     def _load_trajectory(path: str | Path) -> np.ndarray:
@@ -104,13 +114,49 @@ class NN_controller(Controller):
         return q22_trajectory
 
     def load_policy(self):
-        """Load and validate the CSV in place of a neural-network policy."""
-        self.trajectory = self._load_trajectory(TRAJECTORY_PATH)
+        """Load exact recorded commands and any FK targets needed by RL."""
+        if IK_TYPE not in ("pink", "rl_constraint"):
+            raise ValueError("IK_TYPE must be pink or rl_constraint")
+        if IK_TYPE == "rl_constraint":
+            if not RL_CONSTRAINT_MODEL_PATH:
+                raise ValueError("Set RL_CONSTRAINT_MODEL_PATH in box_lift_open_loop/config.py")
+            self.rl_constraint = RLConstraintTeleop(RL_CONSTRAINT_MODEL_PATH, self.robot_config.control_dt)
+        source = self._load_trajectory(TRAJECTORY_PATH)
+        self.trajectory = self._hold_trajectory(
+            source, TRAJECTORY_DT, self.robot_config.control_dt)
+        if HOLD_FIRST_TARGET:
+            self.trajectory[:] = self.trajectory[0]
+            print("Holding the first recorded target for the complete run")
+        if IK_TYPE == "rl_constraint":
+            self.pink_solver = PinkTeleopIK(
+                self.task_config.control_config.teleop_config.pink_config_path)
+            if HOLD_FIRST_TARGET:
+                first_target = self.pink_solver.forward_multi(self.trajectory[0])
+                self.task_targets = [first_target] * len(self.trajectory)
+            else:
+                self.task_targets = [
+                    self.pink_solver.forward_multi(q) for q in self.trajectory]
+        else:
+            self.task_targets = [None] * len(self.trajectory)
         duration = (len(self.trajectory) - 1) * self.robot_config.control_dt
         print(
             f"Loaded {len(self.trajectory)} joint commands from "
             f"{TRAJECTORY_PATH} ({duration:.2f} s at "
             f"{1. / self.robot_config.control_dt:.1f} Hz)")
+
+    @staticmethod
+    def _hold_trajectory(source, source_dt, control_dt):
+        if min(source_dt, control_dt) <= 0:
+            raise ValueError("Trajectory and controller sample periods must be positive")
+        times = np.arange(len(source)) * source_dt
+        ticks = np.arange(int(np.ceil(times[-1] / control_dt)) + 1) * control_dt
+        source_indices = np.floor(
+            (ticks + source_dt * 1e-9) / source_dt).astype(int)
+        return source[np.minimum(source_indices, len(source) - 1)].copy()
+
+    def exec_home_movement(self, wait=False):
+        self.exec_enable_compliance()
+        return super().exec_home_movement(wait=wait)
 
     def exec_nn_control(self, duration: float):
         if self._control_thread is not None and self._control_thread.is_alive():
@@ -168,9 +214,10 @@ class NN_controller(Controller):
         return action
 
     def _read_joint_state(
-            self, sample_index: int, start_time: float) -> list[float]:
+            self, sample_index: int, start_time: float, state=None) -> list[float]:
         robot_id = self.robot_ids[0]
-        state = self.robot[robot_id].get_state()
+        if state is None:
+            state = self.robot[robot_id].get_state()
         joint_position = self.robot[robot_id].validate_joint_command(
             state["q"])
         joint_velocity = np.asarray(state["qdot"], dtype=np.float64)
@@ -209,6 +256,8 @@ class NN_controller(Controller):
             "op_state",
             *(f"q_{name}_deg" for name in joint_names),
             *(f"qdot_{name}_deg_s" for name in joint_names),
+            "ik_mode",
+            *(f"command_{name}_deg" for name in joint_names),
         ]
 
         with output_path.open("x", newline="") as csv_file:
@@ -218,7 +267,6 @@ class NN_controller(Controller):
         return output_path
 
     def _open_loop_control_fn(self, duration: float):
-        compliance_attempted = False
         teleop_attempted = False
         last_action = None
         commands_sent = 0
@@ -227,26 +275,55 @@ class NN_controller(Controller):
         try:
             self._check_start_position()
 
-            compliance_attempted = (
-                self.task_config.control_config.compliance.enable)
-            if compliance_attempted:
-                self.exec_enable_compliance()
+            self.exec_enable_compliance()
 
             teleop_attempted = True
             self.exec_start_movement(control_mode="joint_abs")
 
+            robot_id = self.robot_ids[0]
+            robot = self.robot[robot_id]
+            if self.rl_constraint is not None:
+                self.rl_constraint.reset()
+            print(
+                f"IK mode fixed for this run: {IK_TYPE}. "
+                "Robot compliance remains enabled for both arms.")
+
             start_time = time.monotonic()
             next_tick = start_time
-            for index, command in enumerate(self.trajectory):
+            for index, targets in enumerate(self.task_targets):
                 if not self._control_triggered:
                     break
                 if time.monotonic() - start_time >= duration:
                     print("Open-loop execution reached its duration limit")
                     break
 
-                joint_state = self._read_joint_state(index, start_time)
+                state = robot.get_state()
+                mode = IK_TYPE
+                recorded_command = self.trajectory[index].tolist()
+                if self.rl_constraint is not None:
+                    measured = self.pink_solver.forward_multi(state["q"])
+                    if index == 0:
+                        self.rl_constraint.toggle(state["q"], measured)
+                    if self.rl_constraint.uses_compliant_history:
+                        modes = [float(RL_COMPLIANCE_COMMAND)] * self.rl_constraint.observation.mode_dim
+                        self.rl_constraint.update(targets, state["q"], measured_targets=measured,
+                                                  compliance_mode=modes)
+                    else:
+                        self.rl_constraint.update(targets, state["q"])
+                    command = self.rl_constraint.command(
+                        state["q"], recorded_command)
+                    if RL_CONSTRAINT_DRY_RUN:
+                        print(f"RL dry run — projected q22 (deg): {command}")
+                        command = recorded_command
+                else:
+                    # These are the exact joint commands originally produced by
+                    # Pink during recording; replay them without another IK solve.
+                    command = recorded_command
+                joint_state = self._read_joint_state(index, start_time, state)
                 last_action = self._send_joint_command(command)
-                joint_state_records.append(joint_state)
+                if self.rl_constraint is not None:
+                    self.rl_constraint.record_command(last_action[robot_id], state["q"])
+                joint_state_records.append(joint_state + [mode] + last_action[robot_id])
                 commands_sent += 1
 
                 if index + 1 < len(self.trajectory):
@@ -276,21 +353,12 @@ class NN_controller(Controller):
                             self._control_error = exc
                         print(f"Open-loop soft stop failed: {exc}")
                 try:
-                    # Stop teleoperation before disabling compliance.
+                    # Finish teleoperation; leave compliance enabled.
                     self.exec_finish_movement()
                 except Exception as exc:
                     if self._control_error is None:
                         self._control_error = exc
                     print(f"Failed to leave teleoperation mode: {exc}")
-
-            if compliance_attempted:
-                try:
-                    # self.exec_disable_compliance()
-                    pass
-                except Exception as exc:
-                    if self._control_error is None:
-                        self._control_error = exc
-                    print(f"Failed to disable compliance: {exc}")
 
             if joint_state_records:
                 try:

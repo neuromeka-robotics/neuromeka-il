@@ -31,6 +31,9 @@ from data_collector.config import DataCollectorConfig, CONFIGS as DATA_COLLECTOR
 
 class DataCollectionScheduler(Controller):
 
+    def _read_robot_state(self, robot_id):
+        return self.robot[robot_id].get_state()
+
     def _reset_device_references(self, device_ids):
         """Re-anchor selected teleop devices on their next input sample."""
         for device_id in device_ids:
@@ -246,7 +249,7 @@ class DataCollectionScheduler(Controller):
             if self.ik_type == "rl_constraint":
                 self.rl_constraint.reset()
             initial_states = {
-                robot_id: self.robot[robot_id].get_state()
+                robot_id: self._read_robot_state(robot_id)
                 for robot_id in self.robot_ids
             }
             last_per_arm_commands = {}
@@ -278,7 +281,7 @@ class DataCollectionScheduler(Controller):
             while self._collection_triggered:
                 control_start = time.time()
                 robot_states = {
-                    robot_id: self.robot[robot_id].get_state()
+                    robot_id: self._read_robot_state(robot_id)
                     for robot_id in self.robot_ids
                 }
                 buffer_data = self.collect_buffer(robot_states=robot_states)
@@ -370,7 +373,14 @@ class DataCollectionScheduler(Controller):
                                         targets = measured_targets
                                         print("VIVE references reset to current robot poses")
                                     print(f"IK mode: {mode}")
-                                self.rl_constraint.update(targets, robot_states[rid]["q"])
+                                if self.rl_constraint.uses_compliant_history:
+                                    measured_targets = self.pink_solvers[rid].forward_multi(
+                                        robot_states[rid]["q"], arm_indices=self.arm_index)
+                                    self.rl_constraint.update(
+                                        targets, robot_states[rid]["q"], measured_targets=measured_targets,
+                                    )
+                                else:
+                                    self.rl_constraint.update(targets, robot_states[rid]["q"])
 
                             use_rl = (self.ik_type == "rl_constraint"
                                       and self.rl_constraint.active_mode == "rl_constraint")
@@ -434,6 +444,8 @@ class DataCollectionScheduler(Controller):
                                 acc_scale=self.robot_config.robot_params[
                                     rid]["control"]["acc_scale"],
                             )
+                            if self.ik_type == "rl_constraint":
+                                self.rl_constraint.record_command(value[rid], robot_states[rid]["q"])
                             self.robot[rid].move_gripper(
                                 mode="thread", value=gripper_command_val)
                             gripper_command = {rid: gripper_command_val}

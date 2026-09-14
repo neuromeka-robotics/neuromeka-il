@@ -125,6 +125,22 @@ class PinkTeleopIK:
             if self._full_model.getFrameId(frame_name) >= self._full_model.nframes:
                 raise ValueError(f"Pink IK URDF has no TCP frame {frame_name!r}")
 
+    def forward_multi(self, jpos, arm_indices=(1, 2)) -> dict[int, list[float]]:
+        """Local FK for recorded q22 targets, in the same mm/degree TCP frames as IK."""
+        joints = self._validate_vector(jpos, 22, "Forward kinematics joint position")
+        q = self._model_configuration(self._full_model, dict(zip(
+            DCP_ACTIVE_JOINT_NAMES, np.deg2rad(joints[:18]))))
+        data = self._full_model.createData()
+        self._pin.framesForwardKinematics(self._full_model, data, q)
+        targets = {}
+        for arm in arm_indices:
+            pose = data.oMf[self._full_model.getFrameId(self._task_frames[arm])]
+            targets[arm] = np.concatenate((
+                pose.translation * 1000.,
+                self._rotation.from_matrix(pose.rotation).as_euler("xyz", degrees=True),
+            )).tolist()
+        return targets
+
     @staticmethod
     def _validate_vector(value: Any, size: int, name: str) -> np.ndarray:
         vector = np.asarray(value, dtype=np.float64)

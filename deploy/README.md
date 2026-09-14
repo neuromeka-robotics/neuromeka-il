@@ -77,8 +77,10 @@ With `ik_type="pink"`, click anywhere on the VIVE trackpad to start/stop recordi
 
 ### Plane-constraint reflex teleoperation
 
-`lift_box` is configured with `ik_type="rl_constraint"`, loading Pink and
-`data_collector/models/dual_arm_plane_800.onnx` at startup. Run from `deploy`:
+Set `ik_type="rl_constraint"` and `rl_constraint_model_path` in
+`data_collector/config.py` to load Pink and the ONNX projector together. The
+model may live anywhere; an absolute path to the exported file is simplest. Run
+from `deploy`:
 
 ```bash
 python collect_data.py lift_box
@@ -103,49 +105,80 @@ its initial guess, so the old accumulated VIVE targets are not executed. Pink
 needs no background solves. Switching modes keeps recording and policy history
 active; Pink → RL preserves the VIVE anchors.
 
-For the first hardware test, `lift_box` has `rl_constraint_dry_run=True`. Pink
-commands execute normally. In RL mode, each projected q22 command is printed in
-degrees, while the last command actually sent is repeated to hold the existing
-target with compliance enabled. History and RL-entry references still update
-normally. Saved `joint_abs_control_0` and the stopping command use the actual hold
-target, never the printed projection. Set `rl_constraint_dry_run=False` in
-`data_collector/config.py` when ready to execute RL commands.
+With `rl_constraint_dry_run=True`, Pink commands execute normally. In RL mode,
+each projected q22 command is printed in degrees and the last command actually
+sent is repeated. History still updates, and saved `joint_abs_control_0` contains
+the actual hold target. With `rl_constraint_dry_run=False`, projected commands
+are sent without per-tick printing.
 
-The policy uses current/previous desired palm poses, ten measured joint-position
-samples at 20 Hz (oldest first), and the RL-entry joint reference: 182 float inputs.
-Joint and desired-pose history update on every recording tick, including Pink ticks,
-and survive all mode switches. History starts filled with the first measured joints.
-The palm material point is recomputed from measured palm orientation at RL entry,
-matching the simulator's episode-initial inner box support point. Both desired
-poses are expressed using that same point and the simulation world translation.
+The current `compliant_plane_history_v3` policy runs at 50 Hz. Its default
+observation has 25 synchronized history samples of encoder joints, controller
+target error (`last_sent_command - q`), desired palm pose, measured palm pose, and independent
+left/right compliance-mode flags: 1650 floats. Histories use the exact saved
+offset order and update during both Pink and RL. Desired and measured palm poses
+refer to the fixed inner collision-face points in the robot-base frame, with
+orientations represented by the first two rotation-matrix columns. The runtime
+also accepts the shared-mode v2 contract and retains compatibility with old
+182-input v5 exports.
 
-The ONNX actor includes trained observation normalization. Its 14 outputs are
-measured-joint offsets scaled by 0.02 radians and clipped to the training URDF's
-joint limits, then converted to DCP q22 degrees. The exported metadata defines
-joint order, limits, timing, palm geometry and frame conventions. No Genesis,
-RSL-RL, or policy architecture import is needed for this wrapper. It uses the CPU
-provider of `onnxruntime` (tested with 1.23.2), NumPy and SciPy.
+RL uses encoder joints from the ordinary robot state and local URDF FK for
+measured gripper-base poses, followed by the saved palm offset. Target error
+uses the last command actually sent, including Pink and dry-run hold commands.
+Reset repeats the measured pose as both desired and actual with zero target
+error in every history slot; subsequent ticks use the requested target.
+The last sent target does not reproduce PACE's delayed applied target. The
+real encoder value is used directly: deployment adds no simulated encoder bias
+and no explicit observation or action delay. The output command is
+`q_encoder + saved_action_scale * action`; the saved ONNX metadata supplies the
+scale, joint order, timing, geometry, and observation options. No Genesis,
+RSL-RL, or policy architecture import is needed at runtime.
 
 Both modes send and save the exact final q22 command as `joint_abs_control_0`.
-With joint locking enabled they share the same non-arm command reference. The
-0.1 s delay modeled in training is not added again to the real control path.
+With joint locking enabled they share the same non-arm command reference.
 Contact is inferred from motion history; no contact flag or plane pose is an input,
 and the learned behavior does not enforce an analytical plane constraint.
 
-To export/evaluate another checkpoint, run from `nrmk-genesis`:
+Export a current checkpoint with the Genesis environment, from `neuromeka-il`:
 
 ```bash
-.venv/bin/python experiments/dual_arm_plane/eval.py \
-  run_name=20260909-182947 checkpoint=model_800.pt \
-  cpu=true viewer=false episodes=1
+/home/user/yunho/nrmk-genesis/.venv/bin/python deploy/export_rl_constraint.py \
+  /path/to/run/model_N.pt --output /path/to/run/model_N.onnx
 ```
 
-This exports `model_800.onnx` beside the checkpoint, checks PyTorch/ONNX numerical
-parity, and runs ONNX in simulation. Use `export_only=true` to skip simulation,
-`cpu=false viewer=true` for visual GPU evaluation, or `export_onnx=false` to reuse
-the existing export. Copy the single ONNX file into `data_collector/models/` and
-set `rl_constraint_model_path` in `data_collector/config.py`. Keep `control_dt=0.05`
-for this checkpoint. Set `ik_type="pink"` to use the original whole-trackpad controls.
+The exporter loads the saved architecture only while converting the checkpoint,
+embeds the deployment contract, validates the ONNX graph, and compares 32 ONNX
+outputs against PyTorch. Set the resulting path in the collector configuration.
+The runtime rejects a model when its saved frequency, shape, or interface does
+not match the controller. For v3 teleoperation, set the `lift_box` robot
+`control_dt` to `0.02`.
+
+The Genesis evaluator can export the same contract and run the ONNX actor in the
+actual training environment before hardware use:
+
+```bash
+cd /home/user/yunho/nrmk-genesis
+.venv/bin/python experiments/dual_arm_plane/eval.py \
+  checkpoint=/path/to/run/model_N.pt policy_backend=onnx \
+  export_onnx=true verify_onnx=true cpu=true viewer=false episodes=1
+```
+
+To exercise the same fixed box-lift trajectory through this projector, set
+`IK_TYPE="rl_constraint"` and `RL_CONSTRAINT_MODEL_PATH` in
+`middle_level_controller/box_lift_open_loop/config.py`, then run:
+
+```bash
+python task_demo.py box_lift_open_loop
+```
+
+Press `1` to move home, `2` to start the trajectory, and `0` to stop. `IK_TYPE`
+selects Pink replay or RL projection for the entire run; there is no runtime
+mode switch. The 20 Hz recorded joint commands are held at a 50 Hz loop without
+interpolation. Pink mode therefore sends only exact recorded commands. In RL
+mode, FK of those commands supplies desired TCP history and the policy projects
+the arm joints. Its compliance-command observation is always true for both arms.
+Robot compliance is enabled for both modes and remains enabled after the run.
+Set `HOLD_FIRST_TARGET=True` to repeat the first recorded command for the entire
+run as a stationary-target diagnostic.
 
 By default, raw data are stored in `train/data/TASK_NAME` as `*.h5` files, and the corresponding visualizations are saved in `train/data_viz/TASK_NAME`.
 

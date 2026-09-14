@@ -97,6 +97,7 @@ if __name__ == "__main__":
             print("Stopping execution")
             nn_controller.exec_nn_control_stop()
         elif k == 'q':
+            nn_controller.exec_nn_control_stop()
             break
 
     p.join()

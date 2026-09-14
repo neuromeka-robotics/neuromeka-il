@@ -141,10 +141,11 @@ CONFIGS = {
                     # rl_constraint starts each recording in Pink. Upper VIVE
                     # trackpad clicks record; lower clicks toggle Pink/RL.
                     arm_index = [1, 2],
-                    ik_type = "rl_constraint",  # "pink" for the original IK-only path
+                    ik_type = "pink",  # "pink" for the original IK-only path
                     pink_config_path = str(ROBOT_INTERFACE_EIR_CONFIG),
                     rl_constraint_model_path = str(RL_CONSTRAINT_MODEL),
-                    rl_constraint_dry_run = False,  # Print RL commands; execute Pink normally.
+                    # True prints projected RL commands while holding the last sent command.
+                    rl_constraint_dry_run = False,
                     # Freeze every chain outside the selected arms.
                     lock_non_selected_joints = True,
                 ),

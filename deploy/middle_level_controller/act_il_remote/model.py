@@ -47,7 +47,7 @@ class NN_policy(Empty_NN_policy):
         )
         assert response["result"] == "SUCCESS", "NN Server-Client communication failed"
         
-        self.n_robots = response["num_robots"]
+        assert self.n_robots == response["num_robots"], "Number of robots mismatch"
         self.control_mode = ControlMode.name_to_mode(name=response["control_mode"])
         self.gripper_mode = GripperMode.name_to_mode(name=response["gripper_mode"])
         if self.gripper_mode in [GripperMode.BINARY, GripperMode.CONTINUOUS]:
@@ -98,11 +98,12 @@ class NN_policy(Empty_NN_policy):
         assert "is_new_chunk" in response.keys(), "is_new_chunk key required for action chunking models"
         
         if response["is_new_chunk"]:
-            end_pos = MathFunc.mm_to_m(kwargs["end_pose"][:3])
-            end_ori = MathFunc.degree_to_rad(kwargs["end_pose"][3:])
-            end_ori = MathFunc.euler_to_rotMat(
-                euler_x=end_ori[0], euler_y=end_ori[1], euler_z=end_ori[2]
-            )
+            end_pose = np.asarray(kwargs["end_pose"], dtype=np.float32).reshape(self.n_robots, 6)
+            end_pos = MathFunc.mm_to_m(end_pose[:, :3]).reshape(-1)
+            end_ori = np.stack([
+                MathFunc.euler_to_rotMat(*MathFunc.degree_to_rad(pose[3:]))
+                for pose in end_pose
+            ]).astype(np.float32)
             self.init_relative_end_pos = end_pos
             self.init_relative_end_ori = end_ori
 
@@ -126,8 +127,9 @@ class NN_policy(Empty_NN_policy):
             ].reshape(3, 3)
 
             if self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
-                pos_action = self.init_relative_end_ori @ pos_action + self.init_relative_end_pos
-                rot_action = self.init_relative_end_ori @ rot_action
+                pos_action = (self.init_relative_end_ori[robot_id] @ pos_action
+                              + self.init_relative_end_pos[3 * robot_id:3 * (robot_id + 1)])
+                rot_action = self.init_relative_end_ori[robot_id] @ rot_action
 
             pos_action = MathFunc.m_to_mm(pos_action)
             euler_action = MathFunc.rotMat_to_euler(rot_action)

@@ -29,11 +29,21 @@ if __name__ == "__main__":
     # set data collector and robot connection
     from data_collector.collector import DataCollectionScheduler
     data_collection_scheduler: Controller = DataCollectionScheduler(config_name=sys.argv[1])
+    print("Commands:")
+    print("1: Move to task home")
+    print("2: Collect from start state")
+    print("3: Collect from current state")
+    print("Waiting for commands...")
     while True:
         char = getch.getch()
         if char == '1':
+            print("Moving to task home")
             data_collection_scheduler.exec_home_movement(wait=False)
         elif char == '2':
+            print("Collecting from start state")
             data_collection_scheduler.exec_collection(mode="start")
         elif char == '3':
+            print("Collecting from current state")
             data_collection_scheduler.exec_collection(mode="current")
+        else:
+            print("Invalid command")

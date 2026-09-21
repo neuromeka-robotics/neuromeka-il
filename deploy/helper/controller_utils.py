@@ -7,7 +7,7 @@ import time
 from helper.extra_utils import ROBOT_STATE
 
 # communication
-from communication.robot import Robot, RobotCluster
+from communication.robot import Robot, RobotCluster, create_robot
 
 # config
 from helper.extra_utils import NN_CONTROL_STATE
@@ -30,11 +30,7 @@ class Controller:
                 assert isinstance(self.robot[robot_id], Robot), f"Wrong robot instance for id {robot_id}"
         else:
             for robot_id in self.robot_ids:
-                self.robot[robot_id] = Robot(
-                    robot_ip=self.robot_config.robot_params[robot_id]["ip"], 
-                    gripper_config=self.robot_config.robot_params[robot_id].get("gripper", None),
-                    **self.robot_config.robot_params[robot_id].get("init_kwargs", {})
-                )
+                self.robot[robot_id] = create_robot(self.robot_config.robot_params[robot_id])
                 
         self.robot_cluster = RobotCluster(robots=self.robot)
         self.exec_set_idle()

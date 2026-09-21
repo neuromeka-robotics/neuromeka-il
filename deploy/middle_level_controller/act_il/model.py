@@ -130,13 +130,15 @@ class NN_policy(Empty_NN_policy):
         # Change unit
         qpos = MathFunc.degree_to_rad(qpos)
         qvel = MathFunc.degree_to_rad(qvel)
-        end_pos = MathFunc.mm_to_m(end_pose[:3])
-        end_ori = MathFunc.degree_to_rad(end_pose[3:])
-        end_ori = MathFunc.euler_to_rotMat(
-            euler_x=end_ori[0], euler_y=end_ori[1], euler_z=end_ori[2]
-        )
-        end_linVel = MathFunc.mm_to_m(end_vel[:3])
-        end_angVel = MathFunc.degree_to_rad(end_vel[3:])
+        end_pose = end_pose.reshape(self.n_robots, 6)
+        end_vel = end_vel.reshape(self.n_robots, 6)
+        end_pos = MathFunc.mm_to_m(end_pose[:, :3]).reshape(-1)
+        end_ori = np.stack([
+            MathFunc.euler_to_rotMat(*MathFunc.degree_to_rad(pose[3:]))
+            for pose in end_pose
+        ]).astype(np.float32)
+        end_linVel = MathFunc.mm_to_m(end_vel[:, :3]).reshape(-1)
+        end_angVel = MathFunc.degree_to_rad(end_vel[:, 3:]).reshape(-1)
         
         # Pre-process
         for key in cam_data_dict.keys():
@@ -196,8 +198,9 @@ class NN_policy(Empty_NN_policy):
             ].reshape(3, 3)
 
             if self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
-                pos_action = self.init_relative_end_ori @ pos_action + self.init_relative_end_pos
-                rot_action = self.init_relative_end_ori @ rot_action
+                pos_action = (self.init_relative_end_ori[robot_id] @ pos_action
+                              + self.init_relative_end_pos[3 * robot_id:3 * (robot_id + 1)])
+                rot_action = self.init_relative_end_ori[robot_id] @ rot_action
 
             pos_action = MathFunc.m_to_mm(pos_action)
             euler_action = MathFunc.rotMat_to_euler(rot_action)

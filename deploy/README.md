@@ -17,6 +17,52 @@ Data collection and policy deployment both require the configuration of necessar
 - `middle_level_controller/act_il/config.py`: Configuration for task `act_il` controller. Define `CUSTOM_ROBOT_CONFIG` and `CUSTOM_TASK_CONFIG`.
 - `middle_level_controller/act_il_remote/config.py`: Configuration for task `act_il_remote` controller. Define `CUSTOM_ROBOT_CONFIG` and `CUSTOM_TASK_CONFIG`.
 
+## Dual-arm robot
+
+Represent the two arms as robot IDs `0` and `1`, using the same controller IP.
+Set `class_name` in each `robot_params` entry; omitting it keeps the existing
+`Robot` behavior. For example, use this `ROBOT_CONFIG` in the collection config
+and in the local or remote deployment config:
+
+```python
+from copy import deepcopy
+from helper.config_utils import BASE_ROBOT_CONFIG, ROBOT_CONFIG
+
+robot_params = {}
+for arm_index in (0, 1):
+    params = deepcopy(BASE_ROBOT_CONFIG.robot_params[0])
+    params.update(
+        ip="192.168.0.151",  # shared dual-arm controller
+        class_name="DualArmRobot",
+        init_kwargs={"arm_index": arm_index, "dof": 6},
+        home_pos=None,  # set a measured, safe per-arm joint home pose before deployment
+    )
+    robot_params[arm_index] = params
+dual_robot_config = ROBOT_CONFIG(robot_params=robot_params)
+```
+
+`DualArmRobot` inherits `Robot` and returns only the selected arm's joint and
+task state. Joint moves use the local Neuromeka wheel's `movej(arm_index=...)`
+API. Task moves, task teleoperation and kinematics also select that arm.
+Stop, recovery and teleoperation mode are shared controller operations.
+Direct teaching is inherited from `Robot` and affects the shared controller.
+Joint teleoperation requires a full 22-joint target and commands the shared
+controller. Send it once through either arm, rather than separately for each arm.
+`set_servo_all(enable=True)` enables the shared controller's servos.
+
+Use a separate VIVE controller for each arm. All arms use the same calibration
+and device settings from `DATA_CONFIG.device_params`.
+The existing SpaceMouse backend uses a shared daemon stream, so use VIVE or
+inject separate device objects for independent two-arm input.
+
+Collection retains the existing `q_0`, `q_1`, `p_0`, `p_1`,
+`tele_abs_control_0`, `tele_abs_control_1`, etc. dataset names.
+Use the existing dual-robot training configurations, with six joints per arm;
+no training-code changes are required. Keep robot order `0`, `1` consistent
+between collection and deployment. Other joint counts require corresponding
+training configuration shapes. Local and remote deployment both concatenate
+per-arm observations and apply relative actions in each arm's own frame.
+
 ## Data collection
 Most imitation learning requires collecting demonstration data by teleoperating real-world robots. The codebase supports teleoperating Neuromeka robots with [VIVE Pro 2](https://www.vive.com/us/product/vive-pro2-full-kit/overview/). Follow below three steps.
 
@@ -43,6 +89,17 @@ If the preview is safe, execute the calibration motion:
 ```bash
 python calibrate_vive.py --execute
 ```
+
+For the dual-arm config, select just one logical robot ID (the first is used
+when omitted):
+```bash
+python calibrate_vive.py --config dual_arm --robot-id 0
+python calibrate_vive.py --config dual_arm --robot-id 0 --execute
+```
+Only that arm receives task-space targets. Calibration does not initialize its
+gripper. Teleoperation mode and stopping remain shared controller operations.
+Use the VIVE device printed by the script, mounted on the selected arm.
+The resulting calibration is shared by both arms through `DATA_CONFIG.device_params`.
 
 After execution, inspect the printed calibration result:
 

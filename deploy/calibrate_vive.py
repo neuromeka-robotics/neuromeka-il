@@ -117,6 +117,8 @@ def interpolate_task_trajectory(waypoints: np.ndarray, control_dt: float) -> np.
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", help="Collection config name; uses default or the only available config.")
+    parser.add_argument("--robot-id", type=int, help="Calibrate only this robot ID; defaults to the first configured robot.")
     parser.add_argument("--execute", action="store_true", help="Actually execute the cuboid after preview.")
     return parser
 
@@ -153,24 +155,31 @@ def _openvr_pose_to_pos_rot(pose_matrix):
     return mat[:, 3] * 1000., mat[:, :3].copy()
 
 
-def load_config():
+def load_config(config_name=None):
     from data_collector.config import CONFIGS
 
-    if DEFAULT_CONFIG_NAME not in CONFIGS:
-        raise KeyError("Config %r not found. Available: %s" % (DEFAULT_CONFIG_NAME, sorted(CONFIGS.keys())))
-    return CONFIGS[DEFAULT_CONFIG_NAME]
+    if config_name is None:
+        config_name = DEFAULT_CONFIG_NAME if DEFAULT_CONFIG_NAME in CONFIGS else (
+            next(iter(CONFIGS)) if len(CONFIGS) == 1 else None)
+    if config_name not in CONFIGS:
+        raise KeyError("Select --config from: %s" % sorted(CONFIGS.keys()))
+    return CONFIGS[config_name]
 
 
-def make_robot(config) -> tuple[Robot, dict]:
-    from communication.robot import Robot
+def make_robot(config, robot_id=None) -> tuple[Robot, dict]:
+    from communication.robot import create_robot
+    from copy import deepcopy
 
-    robot_id = config.robot_config.robot_ids[0]
-    robot_params = config.robot_config.robot_params[robot_id]
-    robot = Robot(
-        robot_ip=robot_params["ip"],
-        gripper_config=robot_params.get("gripper", None),
-        **robot_params.get("init_kwargs", {}),
-    )
+    if robot_id is None:
+        robot_id = config.robot_config.robot_ids[0]
+    if robot_id not in config.robot_config.robot_ids:
+        raise ValueError(f"Robot ID {robot_id} is not in this configuration")
+    robot_params = deepcopy(config.robot_config.robot_params[robot_id])
+    # Calibration needs only arm motion, not gripper activation or force setup.
+    robot_params["gripper"] = {"enable": False}
+    robot_params.get("init_kwargs", {}).pop("force_mode", None)
+    print(f"Calibrating robot ID {robot_id} only")
+    robot = create_robot(robot_params)
     return robot, robot_params
 
 
@@ -206,27 +215,42 @@ def execute_and_collect(
     vel = control_cfg["vel_scale"]
     acc = control_cfg["acc_scale"]
     samples: list[dict] = []
-    last_target = trajectory[0]
 
     print("Starting task-absolute teleop...")
     from helper.extra_utils import ROBOT_STATE
-    while robot.get_state()["op_state"] != ROBOT_STATE.TELE_OP:
-        robot.start_teleop(mode="task_abs")
-        time.sleep(0.2)
-    next_tick = time.monotonic()
-    for target in trajectory:
-        last_target = target
-        print(target.tolist())
-        robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
-        sample = collect_sample(robot, vive_device, target)
-        if sample is not None:
-            samples.append(sample)
+    try:
+        # Select task mode even if a previous session left joint teleop active.
+        robot.stop_teleop()
+        deadline = time.monotonic() + 10.
+        while robot.get_state()["op_state"] == ROBOT_STATE.TELE_OP:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Previous teleoperation mode did not stop")
+            time.sleep(0.05)
+        deadline = time.monotonic() + 10.
+        while True:
+            op_state = robot.get_state()["op_state"]
+            if op_state == ROBOT_STATE.TELE_OP:
+                break
+            if ROBOT_STATE.in_failure_state(op_state):
+                raise RuntimeError(f"Cannot start calibration: op_state={op_state}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Task teleoperation did not start within 10 seconds")
+            robot.start_teleop(mode="task_abs")
+            time.sleep(0.2)
+        next_tick = time.monotonic()
+        for target in trajectory:
+            print(target.tolist())
+            robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
+            sample = collect_sample(robot, vive_device, target)
+            if sample is not None:
+                samples.append(sample)
 
-        next_tick += control_dt
-        wait_time = next_tick - time.monotonic()
-        if wait_time > 0:
-            time.sleep(wait_time)
-    robot.stop_teleop()
+            next_tick += control_dt
+            wait_time = next_tick - time.monotonic()
+            if wait_time > 0:
+                time.sleep(wait_time)
+    finally:
+        robot.stop_teleop()
     return samples
 
 
@@ -249,13 +273,13 @@ def print_result(R_RV: np.ndarray, diagnostics: dict) -> np.ndarray:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    config = load_config()
+    config = load_config(args.config)
     control_dt = config.robot_config.control_dt if args.execute else DEFAULT_CONTROL_DT
     if not args.execute:
         print("Dry run: connecting to the robot only to read the current pose; no motion or VIVE access.")
         print("Using default preview control_dt=%.3f s." % control_dt)
 
-    robot, robot_params = make_robot(config)
+    robot, robot_params = make_robot(config, args.robot_id)
     initial_pose = get_current_robot_pose(robot)
     waypoints = generate_cuboid_waypoints(initial_pose, side_mm=CUBOID_SIDE_MM)
     trajectory = interpolate_task_trajectory(waypoints, control_dt)

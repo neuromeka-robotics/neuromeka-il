@@ -152,13 +152,15 @@ class RequestHandler(BaseRequestHandler):
             # Change unit
             qpos = MathFunc.degree_to_rad(qpos)
             qvel = MathFunc.degree_to_rad(qvel)
-            end_pos = MathFunc.mm_to_m(end_pose[:3])
-            end_ori = MathFunc.degree_to_rad(end_pose[3:])
-            end_ori = MathFunc.euler_to_rotMat(
-                euler_x=end_ori[0], euler_y=end_ori[1], euler_z=end_ori[2]
-            )
-            end_linVel = MathFunc.mm_to_m(end_vel[:3])
-            end_angVel = MathFunc.degree_to_rad(end_vel[3:])
+            end_pose = end_pose.reshape(self.n_robots, 6)
+            end_vel = end_vel.reshape(self.n_robots, 6)
+            end_pos = MathFunc.mm_to_m(end_pose[:, :3]).reshape(-1)
+            end_ori = np.stack([
+                MathFunc.euler_to_rotMat(*MathFunc.degree_to_rad(pose[3:]))
+                for pose in end_pose
+            ]).astype(np.float32)
+            end_linVel = MathFunc.mm_to_m(end_vel[:, :3]).reshape(-1)
+            end_angVel = MathFunc.degree_to_rad(end_vel[:, 3:]).reshape(-1)
             
             # Pre-process
             for key in cam_data_dict.keys():

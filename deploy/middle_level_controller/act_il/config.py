@@ -1,70 +1,124 @@
 import os
+from pathlib import Path
 from helper.config_utils import *
-from helper.math_utils import clip_task_space_control
-from helper.extra_utils import home_movement_w_close_gripper
+from helper.extra_utils import home_movement_w_open_gripper
 
 
+DUAL_ARM_IDX = {
+    "left": 0,
+    "right": 1,
+}
+
+# Dual-arm deployment without gripper.
 CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
-    robot_params = {
-        0: {
-            "ip": "192.168.0.147",
-            "home_pos": [0., 0, -90., 0., -90., 0.],
-            "gripper": {
-                "enable": False,
-                "type": "RobotiqUSBClient",
-                "params": {
-                    "port": "/dev/robotiq_2f85"
-                }
-            },
+    robot_params={
+        DUAL_ARM_IDX["left"]: {
+            "ip": "192.168.0.95",
+            "class_name": "DualArmRobot",
+            "init_kwargs": {"arm_index": DUAL_ARM_IDX["left"], "dof": 6},
+            "home_pos": [-214.36339, 68.52022, -67.54501, 34.251938, 89.2215, 44.465378],
+            "gripper": {"enable": False},
             "control": {
-                "vel_scale": 1.,  # 0 ~ 1
-                "acc_scale": 10.,  # 0 ~ 10
-                "move_vel_scale": 50.,  # 0 ~ 100
-                "move_acc_scale": 50.  # 0 ~ 1000
-            }
-        }
+                "vel_scale": 1.,
+                "acc_scale": 10.,
+                "move_vel_scale": 50.,
+                "move_acc_scale": 50.,
+            },
+        },
+        DUAL_ARM_IDX["right"]: {
+            "ip": "192.168.0.95",
+            "class_name": "DualArmRobot",
+            "init_kwargs": {"arm_index": DUAL_ARM_IDX["right"], "dof": 6},
+            "home_pos": [-139.61623, -80.11214, 92.796585, -34.95785, -100.46367, -52.19238],
+            "gripper": {"enable": False},
+            "control": {
+                "vel_scale": 1.,
+                "acc_scale": 10.,
+                "move_vel_scale": 50.,
+                "move_acc_scale": 50.,
+            },
+        },
     },
-    
-    control_dt = 0.05
+    control_dt=0.05,
 )
 
 CUSTOM_TASK_CONFIG = TASK_CONFIG(
-    name = os.path.abspath(__file__).split("/")[-2],  # Name of the folder. In current example, "act_il"
-    
-    camera_config = CAMERA_CONFIG(
-        cam_params = {
-            "left": {
-                "serial": "207222072747",
-                "enable_depth": False
-            },
-            "right": {
-                "serial": "317622073859",
-                "enable_depth": False
-            }
-        }
+    name="act_il",
+    camera_config=CAMERA_CONFIG(
+        cam_params={
+            "wrist": {"serial": "233622076119", "enable_depth": False},
+        },
     ),
-    
-    model_config = MODEL_CONFIG(
-        model_type = "act",
-        model_dir = "/home/nrmk/neuromeka-il/train/weights/broom/2025-08-21-21-31-21",
-        model_file = "policy_last.ckpt",
-        success_threshold = 0.8,
-        device = "cuda"
+    model_config=MODEL_CONFIG(
+        model_type="act",
+        model_dir=str(Path(__file__).resolve().parents[3]
+                      / "train/weights/dual_arm/2026-09-21-18-54-53"),
+        model_file="policy_last.ckpt",
+        success_threshold=0.8,
+        device="cuda",
     ),
-    
-    # Set data_config as None to disable DAGGER
-    data_config = None,
-    
-    # # Set data_config correctly to enable DAGGER
-    # data_config = DATA_CONFIG(
-    #     device_type = "vive",
-    #     device_params = {
-    #         "calib_uvw": [-1.5901484677973787, -3.130982168874227, 1.1842360521284816],
-    #     }
-    # ),
-    
-    extra_config = EXTRA_CONFIG(
-        home_movement_fn = home_movement_w_close_gripper,
-        control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 306.}})
-    )
+    data_config=None,  # Deployment only; DAGGER disabled.
+    extra_config=EXTRA_CONFIG(),
 )
+
+
+# # Dual-arm deployment with the left endport gripper.
+# CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
+#     robot_params={
+#         DUAL_ARM_IDX["left"]: {
+#             "ip": "192.168.0.95",
+#             "class_name": "DualArmRobot",
+#             "init_kwargs": {"arm_index": DUAL_ARM_IDX["left"], "dof": 6},
+#             "home_pos": [-214.36339, 68.52022, -67.54501, 34.251938, 89.2215, 44.465378],
+#             "gripper": {
+#                 "enable": True,
+#                 "type": "EndportDHGripperClient",
+#                 "params": {
+#                     "robot_ip": "192.168.0.95",
+#                     "tool_index": DUAL_ARM_IDX["left"],
+#                     "speed": 100,
+#                     "force": 100,
+#                 },
+#             },
+#             "control": {
+#                 "vel_scale": 1.,
+#                 "acc_scale": 10.,
+#                 "move_vel_scale": 50.,
+#                 "move_acc_scale": 50.,
+#             },
+#         },
+#         DUAL_ARM_IDX["right"]: {
+#             "ip": "192.168.0.95",
+#             "class_name": "DualArmRobot",
+#             "init_kwargs": {"arm_index": DUAL_ARM_IDX["right"], "dof": 6},
+#             "home_pos": [-139.61623, -80.11214, 92.796585, -34.95785, -100.46367, -52.19238],
+#             "gripper": {"enable": False},
+#             "control": {
+#                 "vel_scale": 1.,
+#                 "acc_scale": 10.,
+#                 "move_vel_scale": 50.,
+#                 "move_acc_scale": 50.,
+#             },
+#         },
+#     },
+#     control_dt=0.05,
+# )
+
+# CUSTOM_TASK_CONFIG = TASK_CONFIG(
+#     name="act_il",
+#     camera_config=CAMERA_CONFIG(
+#         cam_params={
+#             "wrist": {"serial": "233622076119", "enable_depth": False},
+#         },
+#     ),
+#     model_config=MODEL_CONFIG(
+#         model_type="act",
+#         model_dir=str(Path(__file__).resolve().parents[3]
+#                       / "train/weights/dual_arm_gripper/2026-09-21-19-05-10"),
+#         model_file="policy_last.ckpt",
+#         success_threshold=0.8,
+#         device="cuda",
+#     ),
+#     data_config=None,  # Deployment only; DAGGER disabled.
+#     extra_config=EXTRA_CONFIG(home_movement_fn=home_movement_w_open_gripper),
+# )

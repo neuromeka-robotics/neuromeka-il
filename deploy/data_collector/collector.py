@@ -110,9 +110,9 @@ class DataCollectionScheduler(Controller):
                     buffer_data[f"{k}_{robot_id}"] = control_dat[k]
             if "gripper" in self.config.data_to_collect:
                 gripper_state = self.robot[robot_id].get_gripper_state()
-                if "gripper_position" in self.config.data_to_collect["proprio"]:
+                if "gripper_position" in self.config.data_to_collect["gripper"]:
                     buffer_data[f"gripper_position_{robot_id}"] = gripper_state["gripper_pos"]
-                if "grasp_state" in self.config.data_to_collect["proprio"]:
+                if "grasp_state" in self.config.data_to_collect["gripper"]:
                     buffer_data[f"grasp_state_{robot_id}"] = gripper_state["grasp_state"]
             if "ft" in self.config.data_to_collect:
                 ft_data = self.robot[robot_id].get_transformed_ft_sensor_data()
@@ -204,7 +204,7 @@ class DataCollectionScheduler(Controller):
                         buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
                     if "gripper_command" in self.config.data_to_collect["control"]:
                         buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
-                    self.data_collector.update_data_buffer(**buffer_data)
+                self.data_collector.update_data_buffer(**buffer_data)
 
                 # execute control to robot
                 self.robot_cluster.tele_move(

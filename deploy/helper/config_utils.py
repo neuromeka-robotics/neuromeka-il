@@ -42,7 +42,7 @@ class ROBOT_CONFIG:
             assert "ip" in self.robot_params[robot_id].keys()
             
             assert "home_pos" in self.robot_params[robot_id].keys()
-            assert isinstance(self.robot_params[robot_id]["home_pos"], list) or isinstance(self.robot_params[robot_id]["home_pos"], None)
+            assert isinstance(self.robot_params[robot_id]["home_pos"], list) or self.robot_params[robot_id]["home_pos"] is None
             
             assert "gripper" in self.robot_params[robot_id].keys()
             assert "enable" in self.robot_params[robot_id]["gripper"].keys() and isinstance(self.robot_params[robot_id]["gripper"]["enable"], bool)

@@ -27,21 +27,34 @@ CUSTOM_TASK_CONFIG.extra_config = EXTRA_CONFIG(
 CUSTOM_TASK_CONFIG.control_config.compliance.enable = True
 CUSTOM_TASK_CONFIG.control_config.robot_control_mode = "joint_abs"
 
-# Select one controller for the complete trajectory.
+# Read-only measured robot / raw CSV / sent-command shadows at http://127.0.0.1:8080.
+VISER_ENABLED = True
+
+# Select Pink replay or RL projection, optionally starting RL after Pink replay.
 IK_TYPE = "rl_constraint"  # "pink" replays recorded commands; "rl_constraint" projects them.
-RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-150210/model_2400.onnx"  # Set the NEW exported ONNX path before enabling.
+# Seconds from trajectory execution start before switching from Pink to RL.
+# Only used for IK_TYPE="rl_constraint": 0.0 starts RL immediately; 1.0 delays 1 s.
+RL_START_DELAY_S = 2.3
+RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-210137/model_350.onnx"  # Set the NEW exported ONNX path before enabling.
+# RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-202438/model_1200.onnx"  # Set the NEW exported ONNX path before enabling.
+# RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-171126/model_3750.onnx"  # Set the NEW exported ONNX path before enabling.
 # RL_CONSTRAINT_MODEL_PATH = "/home/user/yunho/nrmk-genesis/logs/eir-dual-arm-plane/20260914-123544/model_1999.onnx"  # Set the NEW exported ONNX path before enabling.
 RL_CONSTRAINT_DRY_RUN = False
-# Match current training's free_motion_probability=1.0: policy modes are zero.
+# RL_COMPLIANCE_COMMAND sets the initial policy command on every run,
+# including interactive runs where 'r' toggles it during execution.
 # Physical robot compliance remains enabled independently above.
 RL_COMPLIANCE_INTERACTIVE = False
 RL_COMPLIANCE_COMMAND = True
 
-TRAJECTORY_PATH = Path(__file__).with_name("trajectories.csv")
-TRAJECTORY_DT = 0.05  # Source CSV commands are held, without interpolation, at 50 Hz.
+# TRAJECTORY_PATH = Path(__file__).with_name("trajectories.csv")
+TRAJECTORY_PATH = "/home/user/yunho/neuromeka-il/deploy/middle_level_controller/box_lift_open_loop/traj/traj_1_0.175.csv"
+TRAJECTORY_DT = 0.02  # Source CSV commands are held, without interpolation, at 50 Hz.
+# Look ahead in the replay by this many seconds (rounded down to control ticks).
+# 0.0 uses the current sample; after reaching the end, hold the last sample.
+COMMAND_OFFSET_S = 0.
 # Temporary oscillation diagnostic: keep the desired command at sample zero.
 HOLD_FIRST_TARGET = False
-JOINT_STATE_LOG_DIR = Path(__file__).with_name("joint_state_logs")
+RESULT_DIR = Path(__file__).with_name("result")
 
 # Do not start streaming unless the robot is already at the first sample.
 START_POSITION_TOLERANCE_DEG = 0.5

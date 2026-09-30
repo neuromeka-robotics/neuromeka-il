@@ -258,6 +258,7 @@ class NN_controller(Base_NN_controller):
         if len(self.robot_ids) != 1:
             raise ValueError("The move-box policy requires exactly one robot")
         super().__init__(robot=robot, **kwargs)
+        self.visualizer = kwargs.get("visualizer")
 
         self.camera: Dict[str, RealsenseCamHandler] = kwargs.get("camera", {})
         if CAMERA_NAME not in self.task_config.camera_config.cam_params:
@@ -419,6 +420,7 @@ class NN_controller(Base_NN_controller):
         return action
 
     def _nn_control_fn(self, duration: float):
+        visualizer = getattr(self, "visualizer", None)
         robot_id = self.robot_ids[0]
         compliance_attempted = False
         teleop_started = False
@@ -436,6 +438,8 @@ class NN_controller(Base_NN_controller):
 
         try:
             initial_state = self.robot[robot_id].get_state()
+            if visualizer is not None:
+                visualizer.publish(initial_state["q"], reset=True)
             self._check_home_position(initial_state)
 
             compliance_attempted = (
@@ -454,6 +458,8 @@ class NN_controller(Base_NN_controller):
                 and time.monotonic() - start_time < duration
             ):
                 robot_state = self.robot[robot_id].get_state()
+                if visualizer is not None:
+                    visualizer.publish(robot_state["q"])
                 elapsed_s = time.monotonic() - start_time
                 if self._joint_velocity_plotter is not None:
                     joint_velocity = np.asarray(
@@ -523,6 +529,8 @@ class NN_controller(Base_NN_controller):
                     last_robot_action = self._send_joint_command(
                         command_q_deg
                     )
+                    if visualizer is not None:
+                        visualizer.publish(robot_state["q"], last_robot_action[robot_id])
 
                 if recorder is not None:
                     recorder.append(

@@ -31,6 +31,15 @@ from data_collector.config import DataCollectorConfig, CONFIGS as DATA_COLLECTOR
 
 class DataCollectionScheduler(Controller):
 
+    def _publish_visualizer(self, robot_states, commands=None, *, task_commands=None, reset=False):
+        visualizer = getattr(self, "visualizer", None)
+        if visualizer is not None:
+            rid = self.robot_ids[0]
+            visualizer.publish(
+                robot_states[rid]["q"],
+                None if commands is None else commands[rid],
+                task_commands=task_commands, reset=reset)
+
     def _read_robot_state(self, robot_id):
         return self.robot[robot_id].get_state()
 
@@ -43,6 +52,7 @@ class DataCollectionScheduler(Controller):
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
+        self.visualizer = kwargs.get("visualizer")
         self.config: DataCollectorConfig = DATA_COLLECTOR_CONFIGS[kwargs["config_name"]]
         self.robot_config = self.config.robot_config
         self.robot_ids = self.robot_config.robot_ids
@@ -252,6 +262,7 @@ class DataCollectionScheduler(Controller):
                 robot_id: self._read_robot_state(robot_id)
                 for robot_id in self.robot_ids
             }
+            self._publish_visualizer(initial_states, reset=True)
             last_per_arm_commands = {}
             if self.is_multi_arm and self.control_mode == "task_abs":
                 rid = self.robot_ids[0]
@@ -284,6 +295,7 @@ class DataCollectionScheduler(Controller):
                     robot_id: self._read_robot_state(robot_id)
                     for robot_id in self.robot_ids
                 }
+                self._publish_visualizer(robot_states)
                 buffer_data = self.collect_buffer(robot_states=robot_states)
                 if self.is_multi_arm:
                     references = {
@@ -444,6 +456,7 @@ class DataCollectionScheduler(Controller):
                                 acc_scale=self.robot_config.robot_params[
                                     rid]["control"]["acc_scale"],
                             )
+                            self._publish_visualizer(robot_states, value)
                             if self.ik_type == "rl_constraint":
                                 self.rl_constraint.record_command(value[rid], robot_states[rid]["q"])
                             self.robot[rid].move_gripper(
@@ -482,6 +495,8 @@ class DataCollectionScheduler(Controller):
                                         rid]["control"]["acc_scale"],
                                     arm_index=arm_idx,
                                 )
+                                self._publish_visualizer(
+                                    robot_states, task_commands={arm_idx: converted.command})
                             value = {
                                 rid: last_per_arm_commands[
                                     self.arm_index[0]]}
@@ -562,6 +577,12 @@ class DataCollectionScheduler(Controller):
                                 for robot_id in self.robot_config.robot_ids},
                             arm_index=self.arm_index,
                         )
+                        if self.control_mode == "joint_abs":
+                            self._publish_visualizer(robot_states, value)
+                        elif getattr(self, "visualizer", None) is not None:
+                            rid = self.robot_ids[0]
+                            self._publish_visualizer(
+                                robot_states, task_commands={self.arm_index[rid]: value[rid]})
                         self.robot_cluster.move_gripper(
                             mode="thread", value=gripper_command)
 

@@ -20,6 +20,9 @@ from helper.extra_utils import default_home_movement
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 
+# Read-only measured robot / policy-command shadow at http://127.0.0.1:8080.
+VISER_ENABLED = True
+
 CUSTOM_ROBOT_CONFIG = ROBOT_CONFIG(
     robot_class=HumanoidRobot,
     robot_params={

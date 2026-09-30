@@ -65,6 +65,36 @@ Run data collector.
 ```bash
 python collect_data.py [CONFIG_NAME]
 ```
+
+For `lift_box`, a read-only Viser viewer starts automatically at
+<http://127.0.0.1:8080>. Blue is the measured robot and the translucent orange
+shadow represents the command. In `joint_abs` mode it shows the exact final
+joint command sent, including Pink/RL switching and dry-run holds. In `task_abs`
+mode, axes show each arm's exact sent Cartesian target and the shadow is a
+**local Pink IK estimate**: the robot does not expose its internal joint target.
+The viewer labels this estimate and reports when its limited IK solve does not
+converge. Visibility toggles and a joint difference table help inspect tracking.
+
+The viewer runs in a separate process at up to 15 Hz, consuming the collector's
+existing state samples through a nonblocking latest-sample mailbox. It has no
+robot connection. Task-mode visualization limits IK to 20 iterations per frame.
+Updates start after keyboard `2` or `3` enters collection, including the wait for
+the recording trigger. Outside collection (including home movements), the last
+sample remains visible and is labeled stale after 0.5 seconds. Gripper fingers
+are static; the display uses the 18 active body joints from the q22 state.
+
+```bash
+python collect_data.py lift_box --viser-hz 10 --viser-port 8081
+python collect_data.py lift_box --no-viser
+# To view from another computer, open http://<collector-ip>:8080:
+python collect_data.py lift_box --viser-host 0.0.0.0
+```
+
+The viewer uses the EIR URDF from `teleop_config.pink_config_path` and the
+`viser`/`yourdfpy` dependencies already listed in `environment.yaml`. Unfetched
+Git LFS visual meshes fall back to collision geometry. Viewer failure disables
+visualization without interrupting collection.
+
 The high-level command is assigned by keyboard. The keyboard commands in the present setting are as follows:
 
 |  Keyboard  |              Command             |                     Description                    |
@@ -178,13 +208,42 @@ To exercise the same fixed box-lift trajectory through this projector, set
 python task_demo.py box_lift_open_loop
 ```
 
+Set `VISER_ENABLED = True` in `middle_level_controller/box_lift_open_loop/config.py`
+to enable the measured robot (original visual mesh), raw CSV command (green shadow),
+and sent command (orange shadow) viewer
+at <http://127.0.0.1:8080>; set it to `False` to disable it. The same flag is
+available in `middle_level_controller/box_lift_rl/config.py` for the move-box
+policy. Both default to enabled. The orange shadow shows the final validated joint
+command actually sent, including replay commands and RL dry-run fallback.
+For open-loop replay, the green shadow shows the CSV target selected by
+`COMMAND_OFFSET_S`, before RL projection. Each robot has a visibility checkbox;
+the green shadow is hidden until a raw CSV command is available.
+Both shadows show only the left and right arms, including their grippers;
+the measured robot retains its full visual mesh.
+It uses existing state samples and the same separate rendering process as data
+collection. Each execution clears both previous command shadows; when execution stops,
+the last sample is marked stale. Home movements are not streamed to the viewer.
+
+Optional command-line overrides:
+
+```bash
+python task_demo.py box_lift_open_loop --no-viser
+python task_demo.py box_lift_open_loop --viser --viser-port 8081 --viser-hz 10
+```
+
 Press `1` to move home, `2` to start the trajectory, and `0` to stop. `IK_TYPE`
-selects Pink replay or RL projection for the entire run; there is no runtime
-mode switch. The 20 Hz recorded joint commands are held at a 50 Hz loop without
+selects Pink replay or RL projection. With `IK_TYPE="rl_constraint"`, set
+`RL_START_DELAY_S=1.0` to replay Pink commands for the first second of execution,
+then switch to RL at the first control tick at or after the delay. The default
+`0.0` starts RL immediately. RL initializes from the measured state at the switch
+and continues from the current trajectory sample. The delay restarts on every
+execution and is ignored in Pink mode. If execution ends before the delay,
+the entire run uses Pink. The CSV `ik_mode` column records each step's mode.
+The 20 Hz recorded joint commands are held at a 50 Hz loop without
 interpolation. Pink mode therefore sends only exact recorded commands. In RL
 mode, FK of those commands supplies desired TCP history and the policy projects
-the arm joints. Set `RL_COMPLIANCE_INTERACTIVE=True` to start each run with
-policy compliance `[1, 1]` and press `r` during execution to toggle both channels
+the arm joints. Each run starts with the configured `RL_COMPLIANCE_COMMAND`.
+Set `RL_COMPLIANCE_INTERACTIVE=True` and press `r` to toggle both channels
 between `[1, 1]` and `[0, 0]`. Each change prints the new command and takes effect
 at a control tick. With the flag false, `RL_COMPLIANCE_COMMAND` supplies the fixed
 value and `r` is disabled. This changes the policy input while the IK backend
@@ -193,7 +252,167 @@ Robot compliance is enabled for both modes and remains enabled after the run.
 Set `HOLD_FIRST_TARGET=True` to repeat the first recorded command for the entire
 run as a stationary-target diagnostic.
 
+Set `COMMAND_OFFSET_S` to look ahead in the recorded trajectory. For example,
+`0.1` selects the command five control ticks ahead at 50 Hz; `0.0` uses the
+current sample. The offset rounds down to whole control ticks. Pink replay,
+RL desired poses, and RL dry-run replay use the same shifted sample. Once the
+shifted index reaches the end, the last target is held for the remaining
+original replay steps. The run length and initial home-position check remain
+unchanged, and `RL_START_DELAY_S` still counts from execution start.
+
+Each open-loop execution saves timestamped `joint_states_*.csv` and
+`joint_errors_*.png` files under
+`middle_level_controller/box_lift_open_loop/result/{IK_TYPE}_{traj_name}/`,
+where `traj_name` is the `TRAJECTORY_PATH` filename without its extension.
+The CSV includes current measured positions (`q_{joint}_deg`), velocities,
+and the validated commands sent (`command_{joint}_deg`) for all 22 joint slots,
+per-joint errors (`command - current`, degrees), and `error_norm_deg` (the L2
+norm over the 14 arm joints, excluding torso, head, and dummy joints).
+Per-joint errors and plots also use these 14 arm joints. Each error compares
+the state read before sending with the command sent in that same control step.
+The terminal prints the arithmetic mean of these norms across recorded steps.
+The plot shows elapsed time versus the norm (with its mean) and per-joint errors.
+Results are also saved for partial runs stopped with `0` or `q`, or interrupted
+by a controller error; home and soft-stop movements are excluded.
+
+The replay CSV also saves raw DCP `get_control_state()` arrays: `tau`,
+`tau_act`, `tau_ext`, and `tau_jts`, as `{field}_{joint}` columns. Each
+`{field}_count` records the number of entries returned; missing entries are
+blank. Measured positions, velocities, and these torque arrays come from the
+same response, read before sending the command. Logging adds one control-state
+RPC per control step; it does not calculate forces during execution.
+
+### Record a stationary no-contact bias reference
+
+Place the arms in a stationary posture near the lifting posture with no box
+contact, human touch, or external arm support. Keep the same hand/tool setup
+and compliance setting as the lifting run. The robot must already be idle or
+in compliance, with no other motion or teleoperation running.
+
+From `deploy/`:
+
+```bash
+python record_palm_force_bias.py --ip 192.168.0.180
+```
+
+The recorder captures the current measured q22 **once** and streams that fixed
+target with `movetelej_abs` at 50 Hz. It holds for 2 seconds to settle, then
+records for 5 seconds. Before sending any joint commands, it waits up to 10
+seconds for `op_state=17` to confirm that teleoperation is active, repeating
+`stop_teleop()` / `start_teleop(joint_abs)` every 0.2 seconds until it changes.
+The settling
+and recording timers start after that confirmation. It keeps existing servo,
+compliance, and gripper settings.
+It never updates the hold target from later measurements. On completion,
+Ctrl+C, or a recording error, it requests `stop_teleop` and preserves any samples
+already written.
+Attempts with zero accepted samples remove their empty output CSV, allowing
+the same output path to be retried.
+
+Samples are accepted only when every active joint's measured speed is at most
+0.2 deg/s. A joint-position drift exceeding 0.5 deg ends the hold. These checks
+do not establish absence of contact; the recording setup must provide that.
+Use `--settle`, `--duration`, `--rate`, `--max-speed`, and `--max-drift` to adjust
+the corresponding settings. Moving samples are skipped rather than included
+in bias calibration.
+
+The default output is
+`middle_level_controller/box_lift_open_loop/result/bias/no_contact_TIMESTAMP.csv`.
+Use `--output PATH` to choose a new file; existing files are never overwritten.
+Each row saves measured positions/velocities, the fixed command, and raw
+`tau`, `tau_act`, `tau_ext`, and `tau_jts` arrays from the same control-state
+response. Pass the resulting CSV to `compute_palm_forces.py --bias-csv` below.
+
+### Estimate palm force from a saved torque log
+
+After recording a new run, run from `deploy/`:
+
+```bash
+python compute_palm_forces.py pink_traj_1_0.125/joint_states_TIMESTAMP.csv
+```
+
+Pass one or more CSV paths, either relative to the result directory above or
+as full paths. By default, the script uses `tau_jts` and the EIR kinematics
+URDF (override its YAML with `--config`). For each measured posture, Pinocchio's
+`computeGeneralizedGravity` calculates gravity torque, mapped into DCP joint
+order. The script computes `contact_torque = sensor_sign * tau_jts - gravity - bias`
+and fits `J_tcp.T @ wrench = contact_torque` independently for each seven-joint
+arm using least squares. Joint positions are converted from degrees to radians;
+sensor torques are assumed to be Nm and to follow the URDF's positive joint
+directions. Use `--sensor-sign -1` only if a reversed convention is established.
+The norm of the wrench's three force components is in N.
+
+Bias defaults to zero, which is reported as an uncalibrated estimate. To
+calibrate it, supply a CSV containing **only stationary, no-contact samples**:
+
+```bash
+python compute_palm_forces.py run/joint_states_TIMESTAMP.csv --bias-csv no_contact.csv
+```
+
+All rows of that calibration CSV are used to calculate each arm joint's mean
+`sensor_sign * tau_jts - gravity`. The calculation uses each calibration row's
+own posture; it does not subtract the raw torque at a different posture. Do not
+use a loaded/squeezing segment as the no-contact reference. Both input CSVs need
+measured positions and `tau_jts` arm columns.
+
+It appends only missing columns to the same CSV:
+
+- `tau_jts_gravity_force_left_norm_N`
+- `tau_jts_gravity_force_right_norm_N`
+- `tau_jts_gravity_force_mean_norm_N` (mean of the two palm norms)
+
+It saves `joint_states_TIMESTAMP_tau_jts_gravity_force_norm.png` beside the CSV,
+showing both palms and their mean versus elapsed time, and prints the averages
+over all samples and over the final one second. Gravity-only compensation is
+a quasi-static approximation: moving samples still contain inertia and velocity
+effects. The final second is not automatically checked for stationarity.
+
+If any force columns for the selected method already exist, the terminal asks
+`Recompute and replace them? [y/N]`. Enter `y` to recalculate all three force
+columns and replace them in the CSV; any other answer preserves existing
+columns and adds only missing ones. The plot is regenerated in either case.
+If recomputation fails, the original CSV is preserved.
+Missing torque samples produce blank force cells. Logs recorded
+before torque logging cannot be converted with this script.
+
+To use the previous external-torque method, pass `--torque-source tau_ext`.
+It uses the `tau_ext_force_*_norm_N` columns and a `_tau_ext_force_norm.png` plot,
+with no gravity or bias subtraction. The two methods keep separate columns;
+recomputing one preserves the other.
+
+These estimates assume the arm's external torque is explained by a wrench at
+its palm TCP. The force norm includes both squeezing and supporting the box.
+Accuracy depends on the URDF masses/centers of mass (including the attached
+hands), mounting orientation, sensor calibration, and Jacobian conditioning.
+Hardware validity and units/signs of the torque channels are not verified by
+this script. The current gravity model assumes the URDF base is upright, with
+gravity along negative Z.
+
 By default, raw data are stored in `train/data/TASK_NAME` as `*.h5` files, and the corresponding visualizations are saved in `train/data_viz/TASK_NAME`.
+
+### Compare the final samples of two replay logs
+
+Set `LEFT_CSV` and `RIGHT_CSV` at the top of `compare_box_lift_results.py`, then run
+from `deploy/`:
+
+```bash
+python compare_box_lift_results.py
+```
+
+Paths are relative to `middle_level_controller/box_lift_open_loop/result/`, or
+absolute. You can also override them on the command line:
+
+```bash
+python compare_box_lift_results.py --left pink_run/joint_states_TIMESTAMP.csv \
+  --right rl_run/joint_states_TIMESTAMP.csv
+```
+
+Open <http://127.0.0.1:8081>. The two runs appear side by side, each at its own
+last recorded row: full measured visual mesh and orange sent-command arms.
+The sidebar identifies the files, final sample indices, elapsed times, and
+14-arm-joint error norms. This viewer uses saved data and does not connect to
+the robot. Use `--port` to change the port or `--spacing` to adjust the distance
+between the robot bases. Press Ctrl+C to close the viewer.
 
 Example real-world data are available in `unit_test/example/data`, with corresponding visualizations in `unit_test/example/data_viz`.
 

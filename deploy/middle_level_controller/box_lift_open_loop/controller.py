@@ -21,17 +21,21 @@ from helper.controller_utils import Controller
 from .config import (
     CUSTOM_ROBOT_CONFIG,
     CUSTOM_TASK_CONFIG,
-    JOINT_STATE_LOG_DIR,
+    RESULT_DIR,
     START_POSITION_TOLERANCE_DEG,
     TRAJECTORY_PATH,
     TRAJECTORY_DT,
+    COMMAND_OFFSET_S,
     HOLD_FIRST_TARGET,
     IK_TYPE,
+    RL_START_DELAY_S,
     RL_CONSTRAINT_MODEL_PATH,
     RL_CONSTRAINT_DRY_RUN,
     RL_COMPLIANCE_COMMAND,
     RL_COMPLIANCE_INTERACTIVE,
 )
+
+TORQUE_FIELDS = ("tau", "tau_act", "tau_ext", "tau_jts")
 
 
 class NN_controller(Controller):
@@ -47,6 +51,7 @@ class NN_controller(Controller):
             raise ValueError("The box-lift trajectory requires exactly one robot")
 
         super().__init__(robot=robot, **kwargs)
+        self.visualizer = kwargs.get("visualizer")
         self.camera = kwargs.get("camera", {})
         self.trajectory: np.ndarray | None = None
         self._control_triggered = False
@@ -255,10 +260,41 @@ class NN_controller(Controller):
         ]
 
     @staticmethod
+    def _torque_record(state):
+        """Preserve DCP torque values; unreported joints remain blank, not zero."""
+        record = []
+        for field in TORQUE_FIELDS:
+            values = list(state.get(field, []))
+            if len(values) > HumanoidRobot.JOINT_DOF:
+                raise ValueError(f"Unexpected {field} joint count: {len(values)}")
+            record.extend([len(values), *values,
+                           *([None] * (HumanoidRobot.JOINT_DOF - len(values)))])
+        return record
+
+    @staticmethod
     def _save_joint_states(records: list[list[float]]) -> Path:
-        JOINT_STATE_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        output_dir = RESULT_DIR / f"{IK_TYPE}_{Path(TRAJECTORY_PATH).stem}"
+        output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        output_path = JOINT_STATE_LOG_DIR / f"joint_states_{timestamp}.csv"
+        output_path = output_dir / f"joint_states_{timestamp}.csv"
+
+        # Compare the state sampled at this tick with the validated command
+        # sent at the same tick. The policy controls the 14 arm joints at
+        # DCP indices 4:18; exclude the torso, head, and dummy joints.
+        arm_slice = slice(4, 18)
+        error_joint_names = DCP_ACTIVE_JOINT_NAMES[arm_slice]
+        command_offset = 4 + 2 * HumanoidRobot.JOINT_DOF + 1
+        current = np.asarray([
+            row[4:4 + HumanoidRobot.JOINT_DOF] for row in records])[:, arm_slice]
+        commanded = np.asarray([
+            row[command_offset:command_offset + HumanoidRobot.JOINT_DOF]
+            for row in records])[:, arm_slice]
+        errors = commanded - current
+        error_norms = np.linalg.norm(errors, axis=1)
+        mean_error_norm = float(np.mean(error_norms))
+        print(
+            f"Mean joint error norm across {len(records)} time steps: "
+            f"{mean_error_norm:.6f} deg (14 arm joints, command - current)")
 
         dummy_joint_names = tuple(
             f"Dummy_{index}"
@@ -273,23 +309,68 @@ class NN_controller(Controller):
             *(f"qdot_{name}_deg_s" for name in joint_names),
             "ik_mode",
             *(f"command_{name}_deg" for name in joint_names),
+            *(column for field in TORQUE_FIELDS for column in (
+                f"{field}_count", *(f"{field}_{name}" for name in joint_names))),
+            *(f"error_{name}_deg" for name in error_joint_names),
+            "error_norm_deg",
         ]
 
         with output_path.open("x", newline="") as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(header)
-            writer.writerows(records)
+            writer.writerows(
+                [*row, *error.tolist(), float(norm)]
+                for row, error, norm in zip(records, errors, error_norms))
+        print(f"Saved {len(records)} joint states and errors to {output_path}")
+
+        # Render after the robot has stopped, using a headless canvas that is
+        # safe to create in the controller's worker thread.
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
+
+        elapsed = np.asarray([row[1] for row in records])
+        figure = Figure(figsize=(12, 8), constrained_layout=True)
+        FigureCanvasAgg(figure)
+        norm_ax, joints_ax = figure.subplots(2, 1, sharex=True)
+        norm_ax.plot(elapsed, error_norms, label="14-arm-joint error L2 norm")
+        norm_ax.axhline(
+            mean_error_norm, color="tab:red", linestyle="--",
+            label=f"Mean: {mean_error_norm:.6f} deg")
+        norm_ax.set_title(f"{IK_TYPE}: {Path(TRAJECTORY_PATH).stem}")
+        norm_ax.set_ylabel("Error norm (deg)")
+        norm_ax.legend()
+        norm_ax.grid(True, alpha=0.3)
+        for index, name in enumerate(error_joint_names):
+            joints_ax.plot(elapsed, errors[:, index], label=name)
+        joints_ax.set_xlabel("Elapsed time (s)")
+        joints_ax.set_ylabel("Command - current (deg)")
+        joints_ax.legend(ncol=3, fontsize="small")
+        joints_ax.grid(True, alpha=0.3)
+        plot_path = output_dir / f"joint_errors_{timestamp}.png"
+        figure.savefig(plot_path, dpi=150)
+        print(f"Saved joint error plot to {plot_path}")
         return output_path
 
     def _open_loop_control_fn(self, duration: float):
+        visualizer = getattr(self, "visualizer", None)
         teleop_attempted = False
         last_action = None
         commands_sent = 0
         joint_state_records = []
         self._compliance_switches = SimpleQueue()
-        compliance_command = True if self.interactive_compliance_enabled else RL_COMPLIANCE_COMMAND
+        compliance_command = RL_COMPLIANCE_COMMAND
+        rl_started = False
 
         try:
+            if not np.isfinite(COMMAND_OFFSET_S) or COMMAND_OFFSET_S < 0.:
+                raise ValueError("COMMAND_OFFSET_S must be finite and non-negative")
+            control_dt = self.robot_config.control_dt
+            offset_steps = int(np.floor(
+                min(COMMAND_OFFSET_S, (len(self.trajectory) - 1) * control_dt)
+                / control_dt + 1e-9))
+            if self.rl_constraint is not None and (
+                    not np.isfinite(RL_START_DELAY_S) or RL_START_DELAY_S < 0.):
+                raise ValueError("RL_START_DELAY_S must be finite and non-negative")
             self._check_start_position()
 
             self.exec_enable_compliance()
@@ -302,26 +383,45 @@ class NN_controller(Controller):
             if self.rl_constraint is not None:
                 self.rl_constraint.reset()
                 print(f"RL compliance command: {compliance_command}")
+                print(f"RL starts after {RL_START_DELAY_S:g} s of Pink replay")
             print(
-                f"IK mode fixed for this run: {IK_TYPE}. "
+                f"Configured IK mode: {IK_TYPE}. "
                 "Robot compliance remains enabled for both arms.")
+            print(
+                f"Command offset: {COMMAND_OFFSET_S:g} s "
+                f"({offset_steps} control steps ahead, clamped to the last sample)")
 
             start_time = time.monotonic()
             next_tick = start_time
-            for index, targets in enumerate(self.task_targets):
+            for index in range(len(self.trajectory)):
                 if not self._control_triggered:
                     break
-                if time.monotonic() - start_time >= duration:
+                elapsed = time.monotonic() - start_time
+                if elapsed >= duration:
                     print("Open-loop execution reached its duration limit")
                     break
 
                 state = robot.get_state()
-                mode = IK_TYPE
-                recorded_command = self.trajectory[index].tolist()
-                if self.rl_constraint is not None:
+                control_state = robot.robot_client.get_control_state()
+                # q/qdot and raw torques come from the same DCP response.
+                # Keep op_state from get_robot_data(), which provides it.
+                state = {**state, **control_state,
+                         "q": control_state["q"], "qdot": control_state["qdot"]}
+                torque_record = self._torque_record(control_state)
+                if visualizer is not None:
+                    visualizer.publish(state["q"], reset=index == 0)
+                use_rl = self.rl_constraint is not None and (
+                    rl_started or elapsed >= RL_START_DELAY_S)
+                mode = "rl_constraint" if use_rl else "pink"
+                command_index = min(index + offset_steps, len(self.trajectory) - 1)
+                targets = self.task_targets[command_index]
+                recorded_command = self.trajectory[command_index].tolist()
+                if use_rl:
                     measured = self.pink_solver.forward_multi(state["q"])
-                    if index == 0:
+                    if not rl_started:
                         self.rl_constraint.toggle(state["q"], measured)
+                        rl_started = True
+                        print(f"RL activated at {elapsed:.3f} s (step {index})")
                     if self.rl_constraint.uses_compliant_history:
                         while self.interactive_compliance_enabled:
                             try:
@@ -346,10 +446,14 @@ class NN_controller(Controller):
                     command = recorded_command
                 joint_state = self._read_joint_state(index, start_time, state)
                 last_action = self._send_joint_command(command)
-                if self.rl_constraint is not None:
-                    self.rl_constraint.record_command(last_action[robot_id], state["q"])
-                joint_state_records.append(joint_state + [mode] + last_action[robot_id])
+                joint_state_records.append(
+                    joint_state + [mode] + last_action[robot_id] + torque_record)
                 commands_sent += 1
+                if visualizer is not None:
+                    visualizer.publish(
+                        state["q"], last_action[robot_id], raw_command=recorded_command)
+                if use_rl:
+                    self.rl_constraint.record_command(last_action[robot_id], state["q"])
 
                 if index + 1 < len(self.trajectory):
                     next_tick += self.robot_config.control_dt
@@ -387,14 +491,11 @@ class NN_controller(Controller):
 
             if joint_state_records:
                 try:
-                    output_path = self._save_joint_states(joint_state_records)
-                    print(
-                        f"Saved {len(joint_state_records)} joint states to "
-                        f"{output_path}")
+                    self._save_joint_states(joint_state_records)
                 except Exception as exc:
                     if self._control_error is None:
                         self._control_error = exc
-                    print(f"Failed to save joint states: {exc}")
+                    print(f"Failed to save joint states or error plot: {exc}")
 
             self._control_triggered = False
             self._control_thread = None

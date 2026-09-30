@@ -111,6 +111,7 @@ class CollectionFallbackTest(unittest.TestCase):
             }
 
         scheduler, robot = self._scheduler(solve_multi)
+        scheduler.visualizer = MagicMock()
         input_count = 0
 
         def get_device_input(**kwargs):
@@ -137,6 +138,10 @@ class CollectionFallbackTest(unittest.TestCase):
             robot.tele_move.call_args.kwargs["action"],
             [float(expected_commands)] * 18 + [0.] * 4,
         )
+        published = [call.args[1] for call in scheduler.visualizer.publish.call_args_list
+                     if call.args[1] is not None]
+        self.assertEqual(published, [call.kwargs["action"]
+                                    for call in robot.tele_move.call_args_list])
         # Both devices reset once when recording begins. Only device 1 maps to
         # failed arm 2, so only it is re-anchored after each of four failures.
         self.assertEqual(

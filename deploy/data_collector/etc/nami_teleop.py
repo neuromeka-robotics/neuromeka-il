@@ -10,6 +10,7 @@ import yaml
 from scipy.spatial.transform import Rotation
 
 from data_collector.teleop_adapter import TeleopAdapter
+from communication.robot import NamiRobot
 
 from data_collector.etc.pink_ik import PinkIK
 
@@ -243,17 +244,29 @@ class NamiTeleopAdapter(TeleopAdapter):
             raise ValueError("Nami teleoperation requires Vive devices")
         if not {"q", "p"}.issubset(collector_config.data_to_collect.get("proprio", [])):
             raise ValueError("Nami collection requires q and p proprioception")
+        robot_params = next(iter(params.values()))
+        grippers = NamiRobot.get_gripper_configs(robot_params.get("gripper"), robot_params["ip"])
+        factory_kwargs = getattr(collector_config.teleop_adapter_factory, "keywords", {})
+        teleop_config = factory_kwargs.get("teleop_config")
+        if teleop_config is not None and set(grippers) - set(teleop_config.arm_indices):
+            raise ValueError("Each enabled Nami gripper requires its arm's Vive device")
 
     def __init__(self, collector_config, *, teleop_config: NamiTeleopConfig):
         super().__init__(collector_config)
         self.teleop_config = teleop_config
         self.robot_id = self.robot_ids[0]
         self.device_ids = list(teleop_config.arm_indices)
+        params = collector_config.robot_config.robot_params[self.robot_id]
+        self.gripper_arm_indices = tuple(NamiRobot.get_gripper_configs(params.get("gripper"), params["ip"]))
+        if set(self.gripper_arm_indices) - set(self.device_ids):
+            raise ValueError("Each enabled Nami gripper requires its arm's Vive device")
 
     def bind(self, robot_cluster, devices, device_mode):
         if device_mode != "task_abs":
             raise ValueError("Nami teleoperation requires task-space device input")
         super().bind(robot_cluster, devices, device_mode)
+        if tuple(robot_cluster.robots[self.robot_id].gripper_arm_indices) != self.gripper_arm_indices:
+            raise ValueError("Nami robot grippers do not match the collection configuration")
         self.session = NamiTeleop(robot_cluster.robots[self.robot_id], self.teleop_config)
         # Pink converts task-space input when joint-space commands are selected.
         self.control_mode = self.teleop_config.robot_control_mode
@@ -270,9 +283,9 @@ class NamiTeleopAdapter(TeleopAdapter):
         targets = {arm: self.post_process(device_data[arm]["control"]) for arm in self.device_ids}
         command = self.session.convert(targets, {"q": buffer_data[f"q_{self.robot_id}"]})
         self.session.reset_failed_devices(self.devices)
-        # One configured gripper follows the first selected Vive.
-        gripper = 1. - np.round(device_data[self.device_ids[0]]["trigger"])
-        return {self.robot_id: command}, {self.robot_id: gripper}
+        grippers = [float(1. - np.round(device_data[arm]["trigger"]))
+                    for arm in self.gripper_arm_indices]
+        return {self.robot_id: command}, {self.robot_id: grippers}
 
     def recorded_actions(self, actions):
         return {self.robot_id: self.session.recorded_command(actions[self.robot_id])}
@@ -292,4 +305,5 @@ class NamiTeleopAdapter(TeleopAdapter):
             "robot_control_mode": self.teleop_config.robot_control_mode,
             "arm_indices": self.teleop_config.arm_indices,
             "locked_joints": json.dumps(self.teleop_config.effective_locked_joints),
+            "gripper_arm_indices": self.gripper_arm_indices,
         }

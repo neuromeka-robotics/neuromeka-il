@@ -45,7 +45,14 @@ class ROBOT_CONFIG:
             assert isinstance(self.robot_params[robot_id]["home_pos"], list) or self.robot_params[robot_id]["home_pos"] is None
             
             assert "gripper" in self.robot_params[robot_id].keys()
-            assert "enable" in self.robot_params[robot_id]["gripper"].keys() and isinstance(self.robot_params[robot_id]["gripper"]["enable"], bool)
+            gripper = self.robot_params[robot_id]["gripper"]
+            if "per_arm" in gripper:
+                assert "enable" not in gripper, "Set enable on each gripper entry"
+                grippers = gripper["per_arm"].values()
+            else:
+                grippers = (gripper,)
+            for entry in grippers:
+                assert "enable" in entry and isinstance(entry["enable"], bool)
             
             assert "control" in self.robot_params[robot_id].keys()
             for control_param_type in ["vel_scale", "acc_scale", "move_vel_scale", "move_acc_scale"]:

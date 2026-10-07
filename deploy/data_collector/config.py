@@ -7,6 +7,7 @@ from helper.math_utils import clip_task_space_control
 from helper.extra_utils import home_movement_w_open_gripper
 from data_collector.teleop_adapter import TeleopAdapter
 from data_collector.etc.nami_teleop import NamiTeleopAdapter, NamiTeleopConfig
+from communication.robot import NamiRobot
 
 
 @dataclass
@@ -115,14 +116,27 @@ NAMI_IK_CONFIG = os.environ.get(
 )
 
 
-def make_nami_config(mode):
+# Enable neither, either, or both arms. Set tool_index to each physical endport.
+NAMI_GRIPPERS = {
+    "per_arm": {
+        1: {"enable": False, "type": "EndportDHGripperClient",
+            "params": {"tool_index": 0, "speed": 50, "force": 50}},
+        2: {"enable": False, "type": "EndportDHGripperClient",
+            "params": {"tool_index": 1, "speed": 50, "force": 50}},
+    },
+}
+
+
+def make_nami_config(mode, gripper_config=None):
+    gripper_config = NAMI_GRIPPERS if gripper_config is None else gripper_config
+    has_grippers = bool(NamiRobot.get_gripper_configs(gripper_config))
     return DataCollectorConfig(
         robot_config=ROBOT_CONFIG(
             robot_params={0: {
                 "ip": "192.168.0.180",
                 "class_name": "NamiRobot",
                 "home_pos": None,  # Set a validated q22 home pose for your workspace.
-                "gripper": {"enable": False},
+                "gripper": gripper_config,
                 "control": {"vel_scale": 1., "acc_scale": 10.,
                             "move_vel_scale": 50., "move_acc_scale": 50.},
             }},
@@ -146,8 +160,9 @@ def make_nami_config(mode):
         ),
         data_to_collect={
             "proprio": ["q", "qdot", "p", "pdot"],
+            **({"gripper": ["gripper_position", "grasp_state"]} if has_grippers else {}),
             "camera": {},
-            "control": ["tele_abs_control"],
+            "control": ["tele_abs_control"] + (["gripper_command"] if has_grippers else []),
         },
         data_to_collect_once=[],
         teleop_adapter_factory=partial(

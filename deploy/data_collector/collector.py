@@ -372,10 +372,10 @@ class TeleopDataCollector:
     def init_data_buffer(self):
         """
         "q", "qdot", "p", "pdot",   # robot state (T, D)
-        "gripper_position", "grasp_state",   # gripper state  (T, 1)
+        "gripper_position", "grasp_state",   # gripper state (T, G), G grippers per robot
         "images.rgb.{cam_name}", "images.depth.{cam_name}", "images.intrinsics.{cam_name}",  # rgb (T, H, W, C) [rgb], depth (T, H, W) [float32], intrinsics (3, 3) [float32]
         "tele_abs_control"   # robot control  (T, 6)
-        "gripper_command",   # gripper control (T, 1)
+        "gripper_command",   # gripper control (T, G)
         """
         # Reset data
         self.data_types = []

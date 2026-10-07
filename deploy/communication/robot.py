@@ -283,6 +283,86 @@ class NamiRobot(Robot):
     ARM_INDICES = (0, 1, 2)
 
     @staticmethod
+    def get_gripper_configs(config, robot_ip=None):
+        """Return enabled grippers ordered by Nami arm index (1=left, 2=right).
+
+        Legacy single-gripper configs default to the left arm; arm_index overrides it.
+        """
+        if not config:
+            return {}
+        per_arm = config.get("per_arm")
+        if per_arm is None:
+            per_arm = {config.get("arm_index", 1): config}
+        elif "enable" in config:
+            raise ValueError("Set enable on each Nami gripper, not on the per_arm parent")
+        if any(type(arm) is not int or arm not in (1, 2) for arm in per_arm):
+            raise ValueError("Nami grippers require arm indices 1 (left) or 2 (right)")
+        enabled = {arm: per_arm[arm] for arm in sorted(per_arm)
+                   if per_arm[arm].get("enable", False)}
+        endports = set()
+        for gripper in enabled.values():
+            if "type" not in gripper:
+                raise ValueError("Each enabled Nami gripper requires a client type")
+            if gripper["type"] == "EndportDHGripperClient":
+                params = gripper.get("params", {})
+                tool_index = params.get("tool_index", 0)
+                if type(tool_index) is not int or tool_index < 0:
+                    raise ValueError("tool_index must be a non-negative integer")
+                endport = (params.get("robot_ip", robot_ip), tool_index)
+                if endport in endports:
+                    raise ValueError("Nami grippers must use distinct physical endports")
+                endports.add(endport)
+        return enabled
+
+    def __init__(self, robot_ip: str, gripper_config=None, **kwargs):
+        configs = self.get_gripper_configs(gripper_config, robot_ip=robot_ip)
+        super().__init__(robot_ip, gripper_config=None, **kwargs)
+        self.gripper_arm_indices = tuple(configs)
+        self.gripper_clients = {}
+        module = importlib.import_module("communication.gripper")
+        for arm, config in configs.items():
+            client_class = getattr(module, config["type"])
+            params = dict(config.get("params", {}))
+            if config["type"] == "EndportDHGripperClient":
+                params.setdefault("robot_ip", robot_ip)
+            self.gripper_clients[arm] = client_class(**params)
+        # Keep direct client access available for legacy single-gripper notebooks.
+        self.gripper_client = (next(iter(self.gripper_clients.values()))
+                               if len(self.gripper_clients) == 1 else None)
+
+    def get_gripper_state(self, arm_index=None):
+        """Return vectors in gripper_arm_indices order, or one arm's scalar state."""
+        if arm_index is not None:
+            if arm_index not in self.gripper_clients:
+                raise ValueError(f"No enabled gripper for Nami arm {arm_index}")
+            client = self.gripper_clients[arm_index]
+            return {"gripper_pos": client.gripper_pos, "grasp_state": client.is_grasping}
+        states = [self.get_gripper_state(arm) for arm in self.gripper_arm_indices]
+        return {key: [state[key] for state in states]
+                for key in ("gripper_pos", "grasp_state")}
+
+    def move_gripper(self, mode: str, value, arm_index=None):
+        """Move one arm, an ordered vector of grippers, or all with a scalar."""
+        if arm_index is not None and arm_index not in self.gripper_clients:
+            raise ValueError(f"No enabled gripper for Nami arm {arm_index}")
+        arms = self.gripper_arm_indices if arm_index is None else (arm_index,)
+        if not arms:
+            return
+        if mode not in ("thread", "no_thread"):
+            raise ValueError(f"Unsupported gripper mode: {mode}")
+        values = np.asarray(value, dtype=float)
+        if values.ndim == 0:
+            values = np.full(len(arms), values.item())
+        if values.shape != (len(arms),) or not np.all(np.isfinite(values)):
+            raise ValueError(f"Expected {len(arms)} finite Nami gripper commands")
+        for arm, position in zip(arms, np.clip(values, 0., 1.)):
+            client = self.gripper_clients[arm]
+            if mode == "thread":
+                client.MoveGripperWThread(gripper_value=float(position))
+            else:
+                client.MoveGripperWOThread(gripper_value=float(position))
+
+    @staticmethod
     def _vector(value, size):
         vector = np.asarray(value, dtype=float)
         if vector.shape != (size,) or not np.all(np.isfinite(vector)):

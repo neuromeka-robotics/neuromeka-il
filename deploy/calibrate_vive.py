@@ -119,6 +119,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", help="Collection config name; uses default or the only available config.")
     parser.add_argument("--robot-id", type=int, help="Calibrate only this robot ID; defaults to the first configured robot.")
+    parser.add_argument("--arm-index", type=int, choices=(0, 1, 2),
+                        help="Nami task chain: 0=head, 1=left (default), 2=right. Other robots use --robot-id.")
+    parser.add_argument("--device-name", help="Mounted VIVE device, e.g. controller_1; overrides the configured device name.")
     parser.add_argument("--execute", action="store_true", help="Actually execute the cuboid after preview.")
     return parser
 
@@ -132,7 +135,7 @@ def preview_path(waypoints: np.ndarray, trajectory: np.ndarray, control_dt: floa
     print("Estimated duration: %.1f s" % ((len(trajectory) - 1) * control_dt))
 
 
-def open_vive_device():
+def open_vive_device(device_name=None):
     from third_party.vive import triad_openvr
 
     pool = triad_openvr.triad_openvr()
@@ -145,7 +148,10 @@ def open_vive_device():
         )
     if not candidates:
         raise RuntimeError("No VIVE controller/tracker found.")
-    device_name = candidates[0]
+    if device_name is None:
+        device_name = candidates[0]
+    elif device_name not in candidates:
+        raise ValueError(f"VIVE device {device_name!r} is not an available tracker/controller: {candidates}")
     print("Using VIVE device: %s" % device_name)
     return pool, pool.devices[device_name]
 
@@ -183,14 +189,37 @@ def make_robot(config, robot_id=None) -> tuple[Robot, dict]:
     return robot, robot_params
 
 
-def get_current_robot_pose(robot: Robot) -> np.ndarray:
-    current_pose = np.asarray(robot.get_state()["p"], dtype=np.float64)  # mm + deg
+def calibration_arm_index(robot: Robot, arm_index=None):
+    from communication.robot import NamiRobot
+
+    if isinstance(robot, NamiRobot):
+        arm_index = 1 if arm_index is None else arm_index
+        if arm_index not in robot.ARM_INDICES:
+            raise ValueError("Nami arm_index must be 0 (head), 1 (left), or 2 (right)")
+        return arm_index
+    if arm_index is not None:
+        raise ValueError("--arm-index is only for Nami; use --robot-id to select other robots")
+    return None
+
+
+def read_task_pose(robot: Robot, arm_index=None) -> np.ndarray:
+    arm_index = calibration_arm_index(robot, arm_index)
+    state = robot.get_state()
+    pose = state["p"] if arm_index is None else robot.get_task_pose(state, arm_index)
+    pose = np.asarray(pose, dtype=np.float64)  # mm + deg
+    if pose.shape != (6,) or not np.all(np.isfinite(pose)):
+        raise ValueError("Calibration requires one finite six-value task pose")
+    return pose
+
+
+def get_current_robot_pose(robot: Robot, arm_index=None) -> np.ndarray:
+    current_pose = read_task_pose(robot, arm_index)
     print("Using current robot EE pose as cuboid start: %s" % np.array2string(current_pose, precision=3, separator=", "))
     return current_pose
 
 
-def collect_sample(robot: Robot, vive_device, target: np.ndarray) -> dict | None:
-    robot_pose = np.asarray(robot.get_state()["p"], dtype=np.float64)  # mm + deg
+def collect_sample(robot: Robot, vive_device, target: np.ndarray, arm_index=None) -> dict | None:
+    robot_pose = read_task_pose(robot, arm_index)
     vive_pose = vive_device.get_pose_matrix()
     if vive_pose is None:
         return None
@@ -210,7 +239,10 @@ def execute_and_collect(
     vive_device,
     trajectory: np.ndarray,
     control_dt: float,
+    arm_index=None,
 ) -> list[dict]:
+    arm_index = calibration_arm_index(robot, arm_index)
+    move_kwargs = {} if arm_index is None else {"arm_index": arm_index}
     control_cfg = robot_params["control"]
     vel = control_cfg["vel_scale"]
     acc = control_cfg["acc_scale"]
@@ -240,8 +272,9 @@ def execute_and_collect(
         next_tick = time.monotonic()
         for target in trajectory:
             print(target.tolist())
-            robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc)
-            sample = collect_sample(robot, vive_device, target)
+            robot.tele_move(action=target.tolist(), mode="task_abs", vel_scale=vel, acc_scale=acc,
+                            **move_kwargs)
+            sample = collect_sample(robot, vive_device, target, arm_index)
             if sample is not None:
                 samples.append(sample)
 
@@ -279,8 +312,12 @@ def main() -> None:
         print("Dry run: connecting to the robot only to read the current pose; no motion or VIVE access.")
         print("Using default preview control_dt=%.3f s." % control_dt)
 
-    robot, robot_params = make_robot(config, args.robot_id)
-    initial_pose = get_current_robot_pose(robot)
+    robot_id = config.robot_config.robot_ids[0] if args.robot_id is None else args.robot_id
+    robot, robot_params = make_robot(config, robot_id)
+    arm_index = calibration_arm_index(robot, args.arm_index)
+    if arm_index is not None:
+        print(f"Calibrating Nami task chain {arm_index} only")
+    initial_pose = get_current_robot_pose(robot, arm_index)
     waypoints = generate_cuboid_waypoints(initial_pose, side_mm=CUBOID_SIDE_MM)
     trajectory = interpolate_task_trajectory(waypoints, control_dt)
     preview_path(waypoints, trajectory, control_dt)
@@ -288,7 +325,12 @@ def main() -> None:
     if not args.execute:
         print("Dry run only. Re-run with --execute after checking the path.")
         return
-    vive_pool, vive_device = open_vive_device()  # keep pool alive while sampling
+    device_params = config.task_config.data_config.device_params
+    device_id = robot_id if arm_index is None else arm_index
+    configured_device = device_params.get("per_device", {}).get(device_id, {}).get(
+        "device_name", device_params.get("device_name"))
+    device_name = args.device_name if args.device_name is not None else configured_device
+    vive_pool, vive_device = open_vive_device(device_name)  # keep pool alive while sampling
     _ = vive_pool
 
     samples = execute_and_collect(
@@ -297,6 +339,7 @@ def main() -> None:
         vive_device=vive_device,
         trajectory=trajectory,
         control_dt=control_dt,
+        arm_index=arm_index,
     )
     print("Collected valid paired samples: %d" % len(samples))
     if len(samples) < 3:

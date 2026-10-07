@@ -126,6 +126,9 @@ NAMI_GRIPPERS = {
     },
 }
 
+NAMI_IP = "192.168.0.180"  # TODO: Set your Nami controller IP.
+NAMI_HOME_POS = None  # TODO: Set a validated q22 home pose for your workspace.
+
 
 def make_nami_config(mode, gripper_config=None):
     gripper_config = NAMI_GRIPPERS if gripper_config is None else gripper_config
@@ -133,9 +136,9 @@ def make_nami_config(mode, gripper_config=None):
     return DataCollectorConfig(
         robot_config=ROBOT_CONFIG(
             robot_params={0: {
-                "ip": "192.168.0.180",
+                "ip": NAMI_IP,
                 "class_name": "NamiRobot",
-                "home_pos": None,  # Set a validated q22 home pose for your workspace.
+                "home_pos": NAMI_HOME_POS,
                 "gripper": gripper_config,
                 "control": {"vel_scale": 1., "acc_scale": 10.,
                             "move_vel_scale": 50., "move_acc_scale": 50.},

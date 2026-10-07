@@ -87,6 +87,16 @@ python calibrate_vive.py --execute
 > Only the selected arm receives task-space targets.
 > The resulting calibration is shared by both arms through `DATA_CONFIG.device_params`.
 
+> [!NOTE]
+> **Nami:** Select the left task chain and the controller mounted in that hand:
+>
+> ```bash
+> python calibrate_vive.py --config nami_task --arm-index 1 --device-name controller_1
+> python calibrate_vive.py --config nami_task --arm-index 1 --device-name controller_1 --execute
+> ```
+>
+> Change `--device-name` to match the mounted device. If omitted, the selected arm's configured device name is used; with no configured name, calibration uses the first detected tracker/controller as before.
+
 After execution, inspect the printed calibration result:
 
 - `calib_uvw`: Euler angles in radians. After the diagnostics look good, copy this value to `DATA_CONFIG.device_params["calib_uvw"]`.

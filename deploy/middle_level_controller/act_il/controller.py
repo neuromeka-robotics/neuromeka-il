@@ -196,7 +196,7 @@ class NN_controller(Base_NN_controller):
             else:
                 self.robot_cluster.tele_move(
                     action=nn_robot_action,
-                    mode="task_abs",
+                    mode=self.control_mode,
                     vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
                     acc_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["acc_scale"] for robot_id in self.robot_config.robot_ids},
                 )
@@ -214,7 +214,7 @@ class NN_controller(Base_NN_controller):
         self.exec_soft_stop(
             last_action=nn_robot_action,
             control_period=self.robot_config.control_dt,
-            mode="task_abs")
+            mode=self.control_mode)
 
         # post execution
         self.control_state = self.exec_finish_movement()

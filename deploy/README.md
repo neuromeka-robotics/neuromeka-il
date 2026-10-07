@@ -26,8 +26,20 @@ Data collection and policy deployment both require the configuration of necessar
 >
 > To experiment with the `DualArmRobot` class, use [deploy/helper/notebook/dual_robot_example.ipynb](helper/notebook/dual_robot_example.ipynb).
 
+> [!NOTE]
+> **Nami:** Configure one robot entry with `class_name="NamiRobot"` in [deploy/data_collector/config.py](data_collector/config.py). The [NamiRobot interface](communication/robot.py) uses one controller connection for the full body, with task indices `0` (head), `1` (left arm), and `2` (right arm).
+>
+> The [Nami teleoperation adapter](data_collector/etc/nami_teleop.py) maps two VIVE controllers to the left and right arms and sends task-absolute commands. Set the robot IP and VIVE device settings in the configuration, then run:
+>
+> ```bash
+> cd deploy
+> python collect_data.py nami_task
+> ```
+>
+> To experiment with the `NamiRobot` class, use the [Nami playground](helper/notebook/nami_robot_example.ipynb).
+
 > [!WARNING]
-> **Dual-arm robots:** **Do not use `pip install neuromeka`.**
+> **Dual-arm robots and Nami:** **Do not use `pip install neuromeka`.**
 >
 > Use the bundled wheel: [neuromeka-3.5.0.9-py3-none-any.whl](third_party/neuromeka/indyDCP3/neuromeka-3.5.0.9-py3-none-any.whl).
 >

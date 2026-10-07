@@ -272,6 +272,92 @@ class DualArmRobot(Robot):
         return result
 
 
+class NamiRobot(Robot):
+    """q22 = torso(2), head(2), left(7), right(7), dummy(4).
+
+    q uses degrees; p contains head/left/right poses in mm and xyz Euler degrees.
+    Joint commands and mode changes affect the whole controller.
+    """
+
+    JOINT_DOF = 22
+    ARM_INDICES = (0, 1, 2)
+
+    @staticmethod
+    def _vector(value, size):
+        vector = np.asarray(value, dtype=float)
+        if vector.shape != (size,) or not np.all(np.isfinite(vector)):
+            raise ValueError(f"Expected {size} finite values")
+        return vector.tolist()
+
+    def validate_joint_command(self, value):
+        return self._vector(value, self.JOINT_DOF)
+
+    def validate_task_command(self, value, arm_index):
+        if arm_index not in self.ARM_INDICES:
+            raise ValueError("Nami arm_index must be 0 (head), 1 (left), or 2 (right)")
+        return self._vector(value, 6)
+
+    def get_task_pose(self, state, arm_index):
+        poses = self._vector(state["p"], 18)
+        return self.validate_task_command(poses[6 * arm_index:6 * arm_index + 6], arm_index)
+
+    def make_joint_command_from_ik(self, jpos):
+        """The model has 18 active joints; DCP requires four trailing dummy zeros."""
+        return self._vector(jpos, 18) + [0.] * 4
+
+    def set_servo_all(self, enable=True):
+        return self.robot_client.set_servo_all(enable=enable)
+
+    def move(self, target_pos, mode="joint_abs", wait=False,
+             vel_ratio=50, acc_ratio=50, arm_index=1, **kwargs):
+        params = dict(vel_ratio=vel_ratio, acc_ratio=acc_ratio,
+                      blending_type=kwargs.get("blending_type", BlendingType.NONE))
+        if mode == "joint_abs":
+            result = self.robot_client.movej(
+                jtarget=self.validate_joint_command(target_pos), **params)
+        elif mode == "task_abs":
+            result = self.robot_client.movel(
+                ttarget=self.validate_task_command(target_pos, arm_index),
+                arm_index=arm_index, **params)
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+        if wait:
+            time.sleep(0.2)
+            while self.get_state()["op_state"] == ROBOT_STATE.MOVE:
+                time.sleep(0.1)
+        return result
+
+    def tele_move(self, action, mode="joint_abs", vel_scale=0.5, acc_scale=0.5,
+                  arm_index=1, **kwargs):
+        """Send a full q22 joint target or one selected chain's six-value pose."""
+        if mode not in ("joint_abs", "task_abs"):
+            raise ValueError(f"Unsupported mode: {mode}")
+
+        if mode == "joint_abs":
+            return self.robot_client.movetelej_abs(
+                jpos=self.validate_joint_command(action),
+                vel_ratio=vel_scale, acc_ratio=acc_scale)
+        else:
+            return self.robot_client.movetelel_abs(
+                tpos=self.validate_task_command(action, arm_index), arm_index=arm_index,
+                vel_ratio=vel_scale, acc_ratio=acc_scale)
+
+    def compute_forward_kinematics(self, jpos, arm_index=1):
+        self.validate_task_command([0.] * 6, arm_index)
+        result = dict(self.robot_client.forward_kin(
+            jpos=self.validate_joint_command(jpos), arm_index=arm_index))
+        result["success"] = str(result.pop("response")["code"]) == "0"
+        return result
+
+    def compute_inverse_kinematics(self, tpos, init_jpos, arm_index=1):
+        """Controller IK query; Vive joint teleoperation uses Pink instead."""
+        result = dict(self.robot_client.inverse_kin(
+            tpos=self.validate_task_command(tpos, arm_index),
+            init_jpos=self.validate_joint_command(init_jpos), arm_index=arm_index))
+        result["success"] = str(result.pop("response")["code"]) == "0"
+        return result
+
+
 def create_robot(robot_params: Dict) -> Robot:
     """Build the configured class; legacy configurations default to Robot."""
     class_name = robot_params.get("class_name", "Robot")

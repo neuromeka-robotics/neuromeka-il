@@ -17,21 +17,21 @@ from helper.extra_utils import ROBOT_STATE
 from helper.controller_utils import Controller
 from perception.realsense import RealsenseCamHandler
 from data_collector.device.base import BaseDevice
-import getch
+from data_collector.teleop_adapter import TeleopAdapter
 
 # communication
 from communication.robot import Robot
 
 # config
 from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG
-from data_collector.config import DataCollectorConfig, CONFIGS as DATA_COLLECTOR_CONFIGS
+from data_collector.config import DataCollectorConfig, get_config
 
 
 class DataCollectionScheduler(Controller):
     
     def __init__(self, robot: Dict[int, Robot] | None = None, **kwargs):
         # set robot
-        self.config: DataCollectorConfig = DATA_COLLECTOR_CONFIGS[kwargs["config_name"]]
+        self.config: DataCollectorConfig = get_config(kwargs["config_name"])
         self.robot_config = self.config.robot_config
         self.robot_ids = self.robot_config.robot_ids
         self.task_config = self.config.task_config
@@ -62,13 +62,20 @@ class DataCollectionScheduler(Controller):
             data_collector_config=self.config,
             dagger_mode=kwargs.get("dagger_mode", False)
         )
-        self.control_mode = self.data_collector.get_control_mode()
-        
+        self.teleop_adapter = self.data_collector.teleop_adapter
+        self.teleop_adapter.bind(
+            self.robot_cluster, self.data_collector.device,
+            self.data_collector.get_device_control_mode())
+        # Resolve the robot command mode once, before starting teleoperation.
+        self.control_mode = self.teleop_adapter.control_mode
+
         # set empty variable
         self._collection_triggered = False
         self._collection_thread = None
 
     def exec_collection(self, mode: str):
+        import getch
+
         if not self._collection_triggered:
             assert mode in ["start", "current"]
             if mode == "start":
@@ -79,7 +86,12 @@ class DataCollectionScheduler(Controller):
             
             self._collection_thread = Thread(target=self._collection_fn, daemon=True)
             self._collection_thread.start()
-            self._collection_thread.join()
+            try:
+                self._collection_thread.join()
+            except KeyboardInterrupt:
+                self._collection_triggered = False
+                self._collection_thread.join()  # Allow the worker to stop teleoperation.
+                raise
             
             # save trajectory if it's OK
             print("Click 's' to save / Click 'e' to not save")
@@ -150,13 +162,19 @@ class DataCollectionScheduler(Controller):
         return buffer_data
 
     def _collection_fn(self):
+        try:
+            self._collect()
+        finally:
+            self.exec_finish_movement()
+
+    def _collect(self):
         # pre execution
         self.exec_start_movement()
 
         # initialize state variable
         prev_button = False
         is_recording = False
-        value = {robot_id: self.robot[robot_id].get_state()["p"] for robot_id in self.robot_ids}
+        value = None
 
         # start
         while self._collection_triggered:
@@ -165,7 +183,7 @@ class DataCollectionScheduler(Controller):
                     
             # get device data
             device_data = self.data_collector.get_device_input(
-                **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
+                **self.teleop_adapter.device_poses(buffer_data))
             
             # device connection lost
             if not device_data["final_valid"]:
@@ -182,32 +200,30 @@ class DataCollectionScheduler(Controller):
                 print("Recording started")
                 is_recording = True
 
-                for robot_id in self.robot_ids:
-                    self.data_collector.device[robot_id].reset()
-                
+                self.teleop_adapter.reset(buffer_data)
+
                 device_data = self.data_collector.get_device_input(
-                    **{f"p_{robot_id}": buffer_data[f"p_{robot_id}"] for robot_id in self.robot_ids})
+                    **self.teleop_adapter.device_poses(buffer_data))
+                if not device_data["final_valid"]:
+                    print("Device input lost during reset")
+                    break
                 
             prev_button = device_data["final_button"]
                 
             if is_recording:
-                # get robot control
-                value = {robot_id: self.task_config.extra_config.control_post_process_fn(device_data[robot_id]["control"]) \
-                    for robot_id in self.robot_ids}
-                
-                # get gripper control (BINARY)
-                gripper_command = {robot_id: (1. - np.round(device_data[robot_id]["trigger"])) for robot_id in self.robot_ids}
-                
+                value, gripper_command = self.teleop_adapter.convert(device_data, buffer_data)
+                recorded_actions = self.teleop_adapter.recorded_actions(value)
+
                 # update buffer    
                 for robot_id in self.robot_ids:                    
                     if "tele_abs_control" in self.config.data_to_collect["control"]:
-                        buffer_data[f"tele_abs_control_{robot_id}"] = value[robot_id]
+                        buffer_data[f"tele_abs_control_{robot_id}"] = recorded_actions[robot_id]
                     if "gripper_command" in self.config.data_to_collect["control"]:
                         buffer_data[f"gripper_command_{robot_id}"] = gripper_command[robot_id]
                 self.data_collector.update_data_buffer(**buffer_data)
 
                 # execute control to robot
-                self.robot_cluster.tele_move(
+                self.teleop_adapter.send(
                     action=value,
                     mode=self.control_mode,
                     vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},
@@ -223,15 +239,16 @@ class DataCollectionScheduler(Controller):
                 if wait_time > 0.:
                     time.sleep(wait_time)
                     
+        if value is None:
+            return
+
         # soft stop
         self.exec_soft_stop(
             last_action=value,
             control_period=self.robot_config.control_dt,
-            mode=self.control_mode)
-        
-        # post execution
-        self.exec_finish_movement()
-        
+            mode=self.control_mode,
+            tele_move_fn=self.teleop_adapter.send)
+
 
 class TeleopDataCollector:
     def __init__(self, 
@@ -246,13 +263,18 @@ class TeleopDataCollector:
         self.task_name = task_config.name
         self.data_collector_config = data_collector_config
         
+        adapter_factory = getattr(data_collector_config, "teleop_adapter_factory", TeleopAdapter)
+        self.teleop_adapter = adapter_factory(data_collector_config)
+        self.device_ids = self.teleop_adapter.device_ids
         self.device: Dict[int, BaseDevice] = dict()
         if device is None:
-            for robot_id in self.robot_ids:
+            for robot_id in self.device_ids:
                 if self.task_config.data_config.device_type == "vive":
                     from data_collector.device.vive import Vive
                     self.device[robot_id] = Vive(
-                        device_params=self.task_config.data_config.device_params,
+                        device_params={**self.task_config.data_config.device_params,
+                                       **self.task_config.data_config.device_params.get(
+                                           "per_device", {}).get(robot_id, {})},
                     )
                 elif self.task_config.data_config.device_type == "spacemouse":
                     from data_collector.device.spacemouse import SpaceMouse
@@ -313,28 +335,39 @@ class TeleopDataCollector:
         self.init_data_buffer()
         
     def __del__(self):
-        for robot_id in self.robot_ids:
-            self.device[robot_id].exit()
+        for device in getattr(self, "device", {}).values():
+            device.exit()
             
     def get_device_input(self, **kwargs):
         output = dict()
         output["final_button"] = False
         output["final_valid"] = True
         
-        for robot_id in self.robot_ids:
+        for robot_id in self.device_ids:
             output[robot_id] = self.device[robot_id].get_input(robot_pose=kwargs[f"p_{robot_id}"])
             output["final_button"] = output["final_button"] or output[robot_id]["button"]
             output["final_valid"] = output["final_valid"] and output[robot_id]["valid"]
         return output
     
     def get_control_mode(self):
+        """Compatibility alias for callers requesting the device's output mode."""
+        return self.get_device_control_mode()
+
+    def get_device_control_mode(self):
+        """All devices must produce the same supported type of input."""
         from helper.extra_utils import ROBOT_CONTROL_MODE
-        
-        control_mode = self.device[self.robot_ids[0]].CONTROL_MODE
-        if control_mode == ROBOT_CONTROL_MODE.TELE_JOINT_ABSOLUTE:
-            return "joint_abs"
-        else:
-            return "task_abs"
+
+        modes = {self.device[device_id].CONTROL_MODE for device_id in self.device_ids}
+        if len(modes) != 1:
+            raise ValueError("Teleoperation devices must have matching output modes")
+        mode_names = {
+            ROBOT_CONTROL_MODE.TELE_JOINT_ABSOLUTE: "joint_abs",
+            ROBOT_CONTROL_MODE.TELE_TASK_ABSOLUTE: "task_abs",
+        }
+        device_mode = modes.pop()
+        if device_mode not in mode_names:
+            raise ValueError(f"Unsupported device output mode: {device_mode}")
+        return mode_names[device_mode]
             
     def init_data_buffer(self):
         """
@@ -367,8 +400,8 @@ class TeleopDataCollector:
         self.traj_len = 0
         
         # Reset device
-        for robot_id in self.robot_ids:
-            self.device[robot_id].reset()
+        for device in self.device.values():
+            device.reset()
         
     def update_data_buffer(self, **kwargs):
         for k, v in kwargs.items():
@@ -400,6 +433,7 @@ class TeleopDataCollector:
                 print(f"{k}: {self.traj[k].shape} ({self.traj[k].dtype})")
 
         with h5py.File(f"{self.DATA_DIR}/{self.traj_num}.h5", "w") as hf:
+            hf.attrs.update(self.teleop_adapter.recording_metadata)
             for k, v in self.traj.items():
                 if v is not None:
                     hf.create_dataset(k, data=v)

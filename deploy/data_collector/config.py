@@ -1,7 +1,12 @@
 import os
+from pathlib import Path
+from functools import partial
+from typing import Callable
 from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
 from helper.extra_utils import home_movement_w_open_gripper
+from data_collector.teleop_adapter import TeleopAdapter
+from data_collector.etc.nami_teleop import NamiTeleopAdapter, NamiTeleopConfig
 
 
 @dataclass
@@ -10,6 +15,16 @@ class DataCollectorConfig:
     task_config: TASK_CONFIG
     data_to_collect: dict[str]
     data_to_collect_once: List[str] # Data that needs to be collected only once per episode
+    # Existing configurations use the one-device-per-robot adapter by default.
+    teleop_adapter_factory: Callable = TeleopAdapter
+
+    def __post_init__(self):
+        adapter_factory = self.teleop_adapter_factory
+        if isinstance(adapter_factory, partial):
+            adapter_factory = adapter_factory.func
+        validate_config = getattr(adapter_factory, "validate_config", None)
+        if validate_config is not None:
+            validate_config(self)
 
 
 TASK_NAME = "dual_arm"
@@ -91,6 +106,83 @@ CONFIGS = {
         data_to_collect_once=["intrinsics"],
     ),
 }
+
+# Nami is one controller, even when both arms have Vive devices.
+# Override NAMI_IK_CONFIG to use an EIR config outside the sibling checkout.
+NAMI_IK_CONFIG = os.environ.get(
+    "NAMI_IK_CONFIG",
+    str(Path(__file__).resolve().parents[3] / "robot_interface/robot_interface/config/eir.yaml"),
+)
+
+
+def make_nami_config(mode):
+    return DataCollectorConfig(
+        robot_config=ROBOT_CONFIG(
+            robot_params={0: {
+                "ip": "192.168.0.180",
+                "class_name": "NamiRobot",
+                "home_pos": None,  # Set a validated q22 home pose for your workspace.
+                "gripper": {"enable": False},
+                "control": {"vel_scale": 1., "acc_scale": 10.,
+                            "move_vel_scale": 50., "move_acc_scale": 50.},
+            }},
+            control_dt=0.05,
+        ),
+        task_config=TASK_CONFIG(
+            name=f"nami_{mode}",
+            camera_config=CAMERA_CONFIG(cam_params={}),
+            model_config=None,
+            data_config=DATA_CONFIG(
+                device_type="vive",
+                device_params={
+                    # Original Nami calibration; recalibrate for your base stations.
+                    "calib_uvw": [1.5845395944590503, -0.07050698798703221, -0.9403962572922119],
+                    "per_device": {
+                        1: {"device_name": "controller_1"},  # left arm
+                        2: {"device_name": "controller_2"},  # right arm
+                    },
+                },
+            ),
+        ),
+        data_to_collect={
+            "proprio": ["q", "qdot", "p", "pdot"],
+            "camera": {},
+            "control": ["tele_abs_control"],
+        },
+        data_to_collect_once=[],
+        teleop_adapter_factory=partial(
+            NamiTeleopAdapter,
+            teleop_config=NamiTeleopConfig(
+                robot_control_mode=mode,
+                arm_indices=(1, 2),
+                pink_config_path=NAMI_IK_CONFIG if mode == "joint_abs" else None,
+                # Same default as the original Nami: hold torso and head.
+                # Alternatively, use locked_joints=("Joint_L0", "Joint_L1")
+                # with lock_non_selected_joints=False to lock only the torso.
+                lock_non_selected_joints=(mode == "joint_abs"),
+            ),
+        ),
+    )
+
+
+CONFIGS["nami_task"] = make_nami_config("task_abs")
+CONFIGS["nami_joint"] = make_nami_config("joint_abs")
+
+
+def get_config(name):
+    """Check runtime requirements only for the selected collection preset."""
+    config = CONFIGS[name]
+    factory = config.teleop_adapter_factory
+    teleop_config = factory.keywords.get("teleop_config") if isinstance(factory, partial) else None
+    if isinstance(teleop_config, NamiTeleopConfig) and teleop_config.robot_control_mode == "joint_abs":
+        ik_path = Path(teleop_config.pink_config_path).expanduser()
+        if not ik_path.is_file():
+            raise FileNotFoundError(
+                f"Nami joint_abs teleoperation requires an IK config file: {ik_path}. "
+                "Set NAMI_IK_CONFIG to an existing EIR YAML file, or use nami_task for task_abs."
+            )
+    return config
+
 
 # CONFIGS = {
 #     "default": DataCollectorConfig(

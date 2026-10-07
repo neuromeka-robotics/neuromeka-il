@@ -52,9 +52,11 @@ def load_NN_controller(controller_type: str):
 def default_home_movement(self, wait: bool, **kwargs):
     self.exec_home_pos(wait)
     
-def default_start_movement(self, **kwargs):
+def default_start_movement(self, control_mode=None, **kwargs):
+    if control_mode is None:
+        control_mode = self.control_mode
     for robot_id in self.robot_ids:
-        self.set_teleop(robot_id, mode=kwargs.get("control_mode", "task_abs"))
+        self.set_teleop(robot_id, mode=control_mode)
 
 def default_finish_movement(self, **kwargs):
     for robot_id in self.robot_ids:

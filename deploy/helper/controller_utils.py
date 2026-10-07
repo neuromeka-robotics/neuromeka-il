@@ -15,6 +15,8 @@ from helper.config_utils import ROBOT_CONFIG, TASK_CONFIG, BASE_ROBOT_CONFIG, BA
 
 
 class Controller:
+    # Robot command mode; separate from the policy's output representation.
+    control_mode = "task_abs"
     robot_config = BASE_ROBOT_CONFIG
     robot_ids = BASE_ROBOT_CONFIG.robot_ids
     task_config = BASE_TASK_CONFIG
@@ -73,7 +75,7 @@ class Controller:
 
     def exec_set_teleop(self):
         for robot_id in self.robot_ids:
-            self.set_teleop(robot_id)
+            self.set_teleop(robot_id, mode=self.control_mode)
 
     def exec_set_idle(self):
         for robot_id in self.robot_ids:
@@ -115,15 +117,17 @@ class Controller:
     def exec_soft_stop(self, 
                        last_action: Dict[int, List[float]], 
                        control_period: float, 
-                       mode: str = "task_abs"):
+                       mode: str = "task_abs",
+                       tele_move_fn=None):
         assert mode in ["joint_abs", "task_abs"], f"Unavailable control mode {mode}"
+        tele_move_fn = tele_move_fn or self.robot_cluster.tele_move
 
         soft_stop_start = time.time()
 
         while time.time() - soft_stop_start < 0.2:
             soft_stop_control_start = time.time()
 
-            self.robot_cluster.tele_move(
+            tele_move_fn(
                 action=last_action,
                 mode=mode,
                 vel_scale={robot_id: self.robot_config.robot_params[robot_id]["control"]["vel_scale"] for robot_id in self.robot_config.robot_ids},

@@ -15,8 +15,8 @@ class Vive(BaseDevice):
     DEVICE_IDX = 1
     
     def __init__(self, **kwargs):
-        self.device_name = f"controller_{Vive.DEVICE_IDX}"
         self.device_params = kwargs["device_params"]
+        self.device_name = self.device_params.get("device_name", f"controller_{Vive.DEVICE_IDX}")
         self.control_transform = TaskControlTransformation(
             fixed_robot_to_fixed_device_euler=self.device_params["calib_uvw"])
         
@@ -25,6 +25,9 @@ class Vive(BaseDevice):
             from third_party.vive import triad_openvr
             Vive.DEVICE_POOLS = triad_openvr.triad_openvr()
             Vive.DEVICE_POOLS.print_discovered_objects()
+
+        if self.device_name not in Vive.DEVICE_POOLS.devices:
+            raise ValueError(f"Vive device {self.device_name!r} was not discovered")
         
         # Wake-up device
         for _ in range(200):
@@ -35,7 +38,7 @@ class Vive(BaseDevice):
         self.device = Vive.DEVICE_POOLS.devices[self.device_name]
         
         # Increase device id for next call
-        if f"controller_{Vive.DEVICE_IDX + 1}" in Vive.DEVICE_POOLS.devices.keys():
+        if "device_name" not in self.device_params and f"controller_{Vive.DEVICE_IDX + 1}" in Vive.DEVICE_POOLS.devices.keys():
             Vive.DEVICE_IDX += 1
 
         self.reset()
@@ -49,7 +52,7 @@ class Vive(BaseDevice):
         controller_inputs = self.device.get_controller_inputs()
         
         # Communication lost
-        if pose is None:
+        if pose is None or controller_inputs is None:
             return {"control": None, "button": None, "trigger": None, "valid": False}
         
         pos = np.multiply(1000, [pose.m[0][3], pose.m[1][3], pose.m[2][3]])
@@ -65,7 +68,7 @@ class Vive(BaseDevice):
 
             self.control_transform.init_device.pos = self.control_transform.current_device.pos.copy()
             self.control_transform.init_device.rot = self.control_transform.current_device.rot.copy()
-            end_pose = np.array(kwargs["robot_pose"])
+            end_pose = np.array(kwargs["robot_pose"], dtype=float)
             end_pose[3:] *= np.pi / 180  # degree -> rad
             self.control_transform.init_robot_end.pos = end_pose[:3]
             self.control_transform.init_robot_end.rot = MathFunc.euler_to_rotMat(end_pose[3:][0], end_pose[3:][1], end_pose[3:][2])

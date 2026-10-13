@@ -207,6 +207,7 @@ class CONTROL_CONFIG:
 @dataclass
 class TASK_CONFIG:
     name: str = "base"
+    # None disables camera connection and image collection for data collection.
     camera_config: CAMERA_CONFIG | None = field(default_factory=CAMERA_CONFIG)
     model_config: MODEL_CONFIG | None = field(default_factory=MODEL_CONFIG)
     data_config: DATA_CONFIG | None = field(default_factory=DATA_CONFIG)
@@ -214,8 +215,6 @@ class TASK_CONFIG:
     control_config: CONTROL_CONFIG = field(default_factory=CONTROL_CONFIG)
     
     def __post_init__(self):
-        assert self.camera_config is not None, \
-            "Camera configuration is not provided"
         assert self.model_config is not None or self.data_config is not None, \
             "Either model or data configuration must be provided"
     

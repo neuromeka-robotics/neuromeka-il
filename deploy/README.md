@@ -105,6 +105,47 @@ The high-level command is assigned by keyboard. The keyboard commands in the pre
 
 With `ik_type="pink"`, click anywhere on the VIVE trackpad to start/stop recording. With `ik_type="rl_constraint"`, use the upper trackpad to start/stop recording and the lower trackpad to switch Pink/RL. The gripper command is given by pressing the trigger on the back of the Vive controller. When teleoperation finishes, press `s` to save or `e` to discard.
 
+### Replay a saved joint-space episode in Viser
+
+From the repository root:
+
+```bash
+python deploy/replay_collection.py train/data/default/3.h5 --dt 0.05
+```
+
+Open <http://127.0.0.1:8080>. Blue shows measured joints; translucent orange
+arms show the saved joint command. Use **Play**, **Speed**, **Frame**,
+**Previous frame**, and **Next frame** to inspect motion. Under **Joint traces**,
+select a joint to compare measured/sent angles and consecutive command changes.
+Plots include every saved sample without smoothing; set **History** to **All**
+and seek to the last frame to see the full episode.
+
+The script only reads `q_0` and `joint_abs_control_0` from the HDF5 file and the
+local EIR URDF; it does not connect to a robot. It rejects missing, malformed,
+or unequal-length joint arrays instead of truncating them. Use `--robot-id` for
+another dataset suffix, `--urdf` for another EIR URDF, and `--port` if 8080
+is occupied. The repository script finds the model in `replay_bundle/urdf/`.
+
+To share the replay, send `replay_bundle.zip`. It contains an independent copy
+of the script, the complete unchanged `data/3.h5` (including camera images),
+the URDF, all 24 meshes, pinned dependencies, and `README.txt`. After extracting
+it, the recipient can run these commands inside the `replay_bundle` folder:
+
+```bash
+python -m pip install -r requirements.txt
+python replay_collection.py
+```
+
+Use Python 3.10–3.12. The script resolves default data and model paths relative
+to its own location, so the folder can be moved freely. No original repository,
+Neuromeka SDK, Pink installation, or separately downloaded model is needed.
+
+Recordings currently contain no per-sample timestamps: `--dt` sets the assumed
+interval (default 0.05 seconds), not measured timing. Each row pairs the state
+read before sending with that cycle's command. Playback visits every frame;
+a slow renderer can lengthen playback. Home movements and the unlogged
+soft-stop repetitions are absent from the replay.
+
 ### Plane-constraint reflex teleoperation
 
 Set `ik_type="rl_constraint"` and `rl_constraint_model_path` in

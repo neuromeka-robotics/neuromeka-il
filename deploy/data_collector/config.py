@@ -49,7 +49,7 @@ CONFIGS = {
                 0: {
                     "ip": "192.168.0.180",
                     # "home_pos": [-0.022166412, 0.01979957, 0.0222174, 0.025983755, -138.70251, -25.199673, 76.68596, -99.856125, 77.27083, -37.662327, 4.3381577, 137.05807, 25.11176, -73.127144, 102.0329, -73.94338, 37.87939, 0.020310974, 0.0, 0.0, 0.0, 0.0],
-                    "home_pos": [0.0, 0.0, 0.0, 0.0, 0.0, -79.985, -96.142, -100.096, -90.000, 0.0, 0.0, 0.0, 79.985, 96.142, 100.096, 90.000, 0.0, 0.0, 0., 0., 0., 0.],
+                    "home_pos": [0.0, 0.0, 0.0, 0.0, 0.0, -79.985, -96.142, -100.096, -90.000, 10.0, 0.0, 0.0, 79.985, 96.142, 100.096, 90.000, 0.0, 0.0, 0., 0., -10., 0.],
                     "gripper": {
                         "enable": False,
                         "backend": "integrated_dh",
@@ -78,25 +78,18 @@ CONFIGS = {
                     }
                 }
             },
-            control_dt = 0.05
+            control_dt = 0.01
         ),
         task_config = TASK_CONFIG(
             name = "default",  # Task name to collect data
-            camera_config = CAMERA_CONFIG(
-                cam_params = {
-                    "wrist": {
-                        "serial": "254622075364",
-                        "enable_depth": False
-                    },
-                }
-            ),
+            camera_config = None,
             model_config = None,
 
             # To use either vive or spacemouse for teleoperation, uncomment the corresponding data_config
             data_config = DATA_CONFIG(
                 device_type = "vive",
                 device_params = {
-                    "calib_uvw": [1.5845395944590503, -0.07050698798703221, -0.9403962572922119],
+                    "calib_uvw": [1.5371942940135517, 0.0293703372299543, 2.692002518681725],
                     # "absolute": target stays anchored to the robot pose at
                     # reset. "relative": apply each VIVE delta to the latest
                     # measured robot pose, accepting compliance motion.
@@ -130,9 +123,9 @@ CONFIGS = {
                 #control_post_process_fn = lambda control: clip_task_space_control(control=control, range={"z": {"min": 47.355045}, "y": {"min": -624.91986, "max": -544.72253}, "x": {"min": 243.68747, "max": 459.47855}})
             ),
             control_config = CONTROL_CONFIG(
-                robot_control_mode = "joint_abs",
+                robot_control_mode = "task_abs",
                 compliance = COMPLIANCE_CONFIG(
-                    enable = True,
+                    enable = False,
                     stiffness = [100] * 22,
                 ),
                 teleop_config = TELEOP_CONFIG(
@@ -162,17 +155,14 @@ CONFIGS = {
         data_to_collect = {
             "proprio": ["q", "qdot", "p", "pdot"],
             # "gripper": ["gripper_position", "grasp_state"],
-            "camera": {
-                "wrist": ["rgb", "intrinsics"],
-            },
             # This must match control_config.robot_control_mode above.
-            "control": ["joint_abs_control"],
+            "control": ["task_abs_control"],
             # "control": ["joint_abs_control", "gripper_command"]
             #"ft": ["ft_Fx", "ft_Fy", "ft_Fz", "ft_Tx", "ft_Ty", "ft_Tz"],
             #"force_gain": ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif"],
             #"force_mode": ["fm_enable", "fm_des_force", "fm_enabled_force"],
         },
-        data_to_collect_once = ["intrinsics"],
+        data_to_collect_once = [],
         #data_to_collect_once = ["fg_kp", "fg_kv", "fg_kl2", "fg_mass", "fg_damping", "fg_stiffness", "fg_kpf", "fg_kif", "fm_enable", "fm_des_force", "fm_enabled_force"]
     ),
 }

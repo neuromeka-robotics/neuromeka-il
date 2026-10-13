@@ -18,7 +18,7 @@ from helper.math_utils import MathFunc
 if TYPE_CHECKING:
     from communication.robot import Robot
 
-DEFAULT_CONFIG_NAME = "default"
+DEFAULT_CONFIG_NAME = "lift_box"
 CUBOID_SIDE_MM = 100.0
 DEFAULT_CONTROL_DT = 0.05
 CALIBRATION_SPEED_MM_S = 50.0
@@ -219,11 +219,11 @@ def execute_and_collect(
     vel = control_cfg["vel_scale"]
     acc = control_cfg["acc_scale"]
     samples: list[dict] = []
-    compliance_requested = compliance.enable
+    # compliance_requested = compliance.enable
     try:
-        if compliance_requested:
-            robot.set_compliance_mode(
-                enable=True, stiffness=compliance.stiffness)
+        # if compliance_requested:
+        #     robot.set_compliance_mode(
+        #         enable=True, stiffness=compliance.stiffness)
 
         print("Starting task-absolute teleop...")
         from helper.extra_utils import ROBOT_STATE
@@ -255,8 +255,8 @@ def execute_and_collect(
         # Keep the same order as data collection: stop teleop first, then turn
         # compliance off even if motion or VIVE sampling raises an exception.
         robot.stop_teleop()
-        if compliance_requested:
-            robot.set_compliance_mode(enable=False)
+        # if compliance_requested:
+        #     robot.set_compliance_mode(enable=False)
     return samples
 
 

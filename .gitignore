@@ -1,2 +1,6 @@
 __pycache__/
 logs/
+
+# Local replay datasets and generated archive
+/replay_bundle/data/
+/replay_bundle.zip

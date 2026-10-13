@@ -61,13 +61,15 @@ class DataCollectionScheduler(Controller):
         super(DataCollectionScheduler, self).__init__(robot=robot, **kwargs)
         
         # set camera
-        self.camera: Dict[str, RealsenseCamHandler] = kwargs.get("camera", dict())
-        for cam_name in self.task_config.camera_config.cam_names:
+        camera_config = self.task_config.camera_config
+        self.camera: Dict[str, RealsenseCamHandler] = (
+            kwargs.get("camera", dict()) if camera_config is not None else {})
+        for cam_name in camera_config.cam_names if camera_config is not None else []:
             if cam_name in self.camera.keys():
                 if not self.camera[cam_name]._thread_running:
                     self.camera[cam_name].start()
             else:
-                cam_config = self.task_config.camera_config.cam_params[cam_name]
+                cam_config = camera_config.cam_params[cam_name]
                 
                 self.camera[cam_name] = RealsenseCamHandler(
                     serial_number=cam_config["serial"], 
@@ -236,7 +238,8 @@ class DataCollectionScheduler(Controller):
                     buffer_data[f"{k}_{robot_id}"] = force_mode_dict[fm_k]
         
         # get exteroception
-        if "camera" in self.config.data_to_collect:
+        if (self.task_config.camera_config is not None
+                and "camera" in self.config.data_to_collect):
             for cam_name in self.config.data_to_collect["camera"]:
                 cam_output = self.camera[cam_name].get_all()
                 for k in self.config.data_to_collect["camera"][cam_name]:
@@ -817,9 +820,10 @@ class TeleopDataCollector:
             for robot_id in self.robot_ids:
                 self.data_types.append(f"{type}_{robot_id}")
                 
-        for cam_name in self.data_collector_config.data_to_collect["camera"]:
-            for data in self.data_collector_config.data_to_collect["camera"][cam_name]:
-                self.data_types.append(f"images.{data}.{cam_name}")
+        if self.task_config.camera_config is not None:
+            for cam_name, camera_data in self.data_collector_config.data_to_collect.get("camera", {}).items():
+                for data in camera_data:
+                    self.data_types.append(f"images.{data}.{cam_name}")
         
         self.traj = dict()
         for data_type in self.data_types:

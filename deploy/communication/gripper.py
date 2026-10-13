@@ -129,6 +129,7 @@ class EndportDHGripperClient(BaseGripperClient):
 
     def initialize(self):
         response = self.activate()
+        # response = self._send(self._commands.AUTO_DETECT)
         time.sleep(1.)
         return response
 

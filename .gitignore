@@ -1,1 +1,7 @@
 __pycache__/
+
+box_lift_open_loop/
+box_lift_rl/
+logs/
+replay_bundle/
+.vscode/

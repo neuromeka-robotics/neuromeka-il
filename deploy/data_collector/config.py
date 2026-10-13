@@ -126,9 +126,14 @@ NAMI_GRIPPERS = {
     },
 }
 
-NAMI_IP = "192.168.0.180"  # TODO: Set your Nami controller IP.
-NAMI_HOME_POS = None  # TODO: Set a validated q22 home pose for your workspace.
-
+NAMI_IP = "192.168.0.67"  # TODO: Set your Nami controller IP.
+NAMI_HOME_POS = [0., 0., 25., 0., -137., -25., 73., -102., 74., -38., 0.2599228, 137, 25., -73., 102., -74., 38, 0., 0., 0., 0., 0.]  # TODO: Set a validated q22 home pose for your workspace.
+# NAMI_HOME_POS = [
+#                 0.0, 0.0, 18.5, 0.0,
+#                 0.0, -79.985, -96.142, -100.096, -90.0, 0.0, 0.0,
+#                 0.0, 79.985, 96.142, 100.096, 90.0, 0.0, 0.0,
+#                 0.0, 0.0, 0.0, 0.0,
+#             ]
 
 def make_nami_config(mode, gripper_config=None):
     gripper_config = NAMI_GRIPPERS if gripper_config is None else gripper_config
@@ -153,7 +158,7 @@ def make_nami_config(mode, gripper_config=None):
                 device_type="vive",
                 device_params={
                     # Original Nami calibration; recalibrate for your base stations.
-                    "calib_uvw": [1.5845395944590503, -0.07050698798703221, -0.9403962572922119],
+                    "calib_uvw": [1.6082502887310102, 0.003284217687448091, -0.8360883464227169],
                     "per_device": {
                         1: {"device_name": "controller_1"},  # left arm
                         2: {"device_name": "controller_2"},  # right arm
@@ -177,7 +182,8 @@ def make_nami_config(mode, gripper_config=None):
                 # Same default as the original Nami: hold torso and head.
                 # Alternatively, use locked_joints=("Joint_L0", "Joint_L1")
                 # with lock_non_selected_joints=False to lock only the torso.
-                lock_non_selected_joints=(mode == "joint_abs"),
+                # lock_non_selected_joints=(mode == "joint_abs"),
+                lock_non_selected_joints=False,
             ),
         ),
     )

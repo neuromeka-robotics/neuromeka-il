@@ -1,8 +1,6 @@
 # NAMI teleoperation demo
 
 Use the installed deployment environment. Run Python commands from `neuromeka-il/deploy`.
-Before the demo, set `NAMI_HOME_POS` to a validated 22-joint home pose in
-[`data_collector/config.py`](data_collector/config.py), and set the robot IP inside `make_nami_config()`.
 
 Use the [NAMI notebook](helper/notebook/nami_robot_example.ipynb) to check the robot connection, read its state, and try interactive commands.
 
@@ -25,7 +23,14 @@ controllers are detected. Otherwise, check controller power, headset connections
 and power. The headset distributor/link box should have its green LED on; press
 its power button if needed.
 
-## 2. Calibrate VIVE after moving the base stations
+## 2. Set config TODOs
+
+Update the TODOs in [`data_collector/config.py`](data_collector/config.py):
+
+- `NAMI_IP`: Set your NAMI controller IP.
+- `NAMI_HOME_POS`: Set a validated 22-joint home pose for your workspace.
+
+## 3. Calibrate VIVE after moving the base stations
 
 Use the [NAMI notebook](helper/notebook/nami_robot_example.ipynb) to open or close the gripper when mounting the VIVE controller.
 
@@ -42,7 +47,7 @@ After checking the printed diagnostics, copy the three `calib_uvw` values (radia
 into `make_nami_config()` → `DATA_CONFIG` → `device_params["calib_uvw"]` in
 [`data_collector/config.py`](data_collector/config.py). Both arms share this calibration.
 
-## 3. Run teleoperation
+## 4. Run teleoperation
 
 ```bash
 python collect_data.py nami_task

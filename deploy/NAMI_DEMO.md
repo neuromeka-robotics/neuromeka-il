@@ -8,6 +8,14 @@ Use the [NAMI notebook](helper/notebook/nami_robot_example.ipynb) to check the r
 
 ## 1. Start SteamVR
 
+If Steam is not installed, install it first:
+
+```bash
+sudo apt install steam
+```
+
+Start Steam:
+
 ```bash
 steam
 ```

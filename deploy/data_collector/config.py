@@ -146,7 +146,7 @@ def make_nami_config(mode, gripper_config=None):
                 "home_pos": NAMI_HOME_POS,
                 "gripper": gripper_config,
                 "control": {"vel_scale": 1., "acc_scale": 10.,
-                            "move_vel_scale": 50., "move_acc_scale": 50.},
+                            "move_vel_scale": 10., "move_acc_scale": 10.},
             }},
             control_dt=0.05,
         ),

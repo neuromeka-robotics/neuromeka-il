@@ -282,6 +282,37 @@ class NamiRobot(Robot):
     JOINT_DOF = 22
     ARM_INDICES = (0, 1, 2)
 
+    def get_control_state(self) -> Dict:
+        """Read whole-body motion and torque signals from IndyDCP."""
+        return self.robot_client.get_control_state()
+
+    def enable_compliance_mode(self, stiffness: List[int] | None = None):
+        """Enable and confirm compliance before starting Nami teleoperation."""
+        if stiffness is not None:
+            values = np.asarray(stiffness, dtype=float)
+            if values.shape != (self.JOINT_DOF,) or not np.all(np.isfinite(values)):
+                raise ValueError(f"compliance stiffness must contain {self.JOINT_DOF} finite values")
+            if np.any(values != np.round(values)):
+                raise ValueError("compliance stiffness values must be integers")
+            stiffness = [int(value) for value in values]
+
+        deadline = time.monotonic() + 10.
+        last_error = None
+        while time.monotonic() < deadline:
+            try:
+                if self.robot_client.get_compliance_mode()["enable"]:
+                    return
+            except Exception as exc:
+                last_error = exc
+            try:
+                self.robot_client.set_compliance_mode(enable=True, stiffness=stiffness)
+            except Exception as exc:
+                # STEP may apply the transition and close the socket before replying.
+                # Confirm the state on the next iteration, as in deprecated/nami.
+                last_error = exc
+            time.sleep(0.2)
+        raise RuntimeError("Nami did not enter compliance mode within 10 seconds") from last_error
+
     @staticmethod
     def get_gripper_configs(config, robot_ip=None):
         """Return enabled grippers ordered by Nami arm index (1=left, 2=right).

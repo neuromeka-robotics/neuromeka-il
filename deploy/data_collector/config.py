@@ -6,7 +6,7 @@ from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
 from helper.extra_utils import home_movement_w_open_gripper
 from data_collector.teleop_adapter import TeleopAdapter
-from data_collector.etc.nami_teleop import NamiTeleopAdapter, NamiTeleopConfig
+from data_collector.etc.nami_teleop import NamiTeleopAdapter, NamiTeleopConfig, start_nami_collection
 from communication.robot import NamiRobot
 
 
@@ -127,6 +127,8 @@ NAMI_GRIPPERS = {
 }
 
 NAMI_IP = "192.168.0.67"  # TODO: Set your Nami controller IP.
+NAMI_COMPLIANCE_ENABLED = False  # Enable before each collection; False skips the command.
+NAMI_COMPLIANCE_STIFFNESS = [100] * 22
 NAMI_HOME_POS = [0., 0., 25., 0., -137., -25., 73., -102., 74., -38., 0.2599228, 137, 25., -73., 102., -74., 38, 0., 0., 0., 0., 0.]  # TODO: Set a validated q22 home pose for your workspace.
 # NAMI_HOME_POS = [
 #                 0.0, 0.0, 18.5, 0.0,
@@ -148,12 +150,19 @@ def make_nami_config(mode, gripper_config=None):
                 "control": {"vel_scale": 1., "acc_scale": 10.,
                             "move_vel_scale": 50., "move_acc_scale": 50.},
             }},
-            control_dt=0.05,
+            control_dt=0.01,  # 100 Hz teleoperation and recording target
         ),
         task_config=TASK_CONFIG(
             name=f"nami_{mode}",
             camera_config=CAMERA_CONFIG(cam_params={}),
             model_config=None,
+            extra_config=EXTRA_CONFIG(
+                start_movement_fn=partial(
+                    start_nami_collection,
+                    enable_compliance=NAMI_COMPLIANCE_ENABLED,
+                    stiffness=NAMI_COMPLIANCE_STIFFNESS,
+                ),
+            ),
             data_config=DATA_CONFIG(
                 device_type="vive",
                 device_params={
@@ -170,7 +179,11 @@ def make_nami_config(mode, gripper_config=None):
             "proprio": ["q", "qdot", "p", "pdot"],
             **({"gripper": ["gripper_position", "grasp_state"]} if has_grippers else {}),
             "camera": {},
-            "control": ["tele_abs_control"] + (["gripper_command"] if has_grippers else []),
+            "control": [
+                "tele_abs_control",
+                "qdes", "qdotdes", "qddotdes", "pdes", "pdotdes", "pddotdes",
+                "tau", "tau_act", "tau_ext", "tau_jts",
+            ] + (["gripper_command"] if has_grippers else []),
         },
         data_to_collect_once=[],
         teleop_adapter_factory=partial(
@@ -182,8 +195,8 @@ def make_nami_config(mode, gripper_config=None):
                 # Same default as the original Nami: hold torso and head.
                 # Alternatively, use locked_joints=("Joint_L0", "Joint_L1")
                 # with lock_non_selected_joints=False to lock only the torso.
-                # lock_non_selected_joints=(mode == "joint_abs"),
-                lock_non_selected_joints=False,
+                lock_non_selected_joints=(mode == "joint_abs"),
+                # lock_non_selected_joints=False,
             ),
         ),
     )

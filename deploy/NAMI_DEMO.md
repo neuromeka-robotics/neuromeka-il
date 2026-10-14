@@ -29,6 +29,11 @@ Update the TODOs in [`data_collector/config.py`](data_collector/config.py):
 
 - `NAMI_IP`: Set your NAMI controller IP.
 - `NAMI_HOME_POS`: Set a validated 22-joint home pose for your workspace.
+- `NAMI_COMPLIANCE_ENABLED`: `True` enables compliance before each collection starts
+  teleoperation. `False` skips the compliance command. `NAMI_COMPLIANCE_STIFFNESS`
+  defaults to `[100] * 22`, matching the deprecated NAMI configuration.
+  Collection cleanup does not send a compliance-disable command because of the
+  firmware bug; the controller clears the mode internally when teleoperation ends.
 
 ## 3. Calibrate VIVE after moving the base stations
 
@@ -56,7 +61,7 @@ python collect_data.py nami_task
 1. Press keyboard **1** to move home; wait until motion finishes.
 2. Press keyboard **2** to move home and prepare teleoperation.
 3. Click the VIVE trackpad button once to start control; click again to stop.
-4. Press keyboard **e** to discard the recording.
+4. Press keyboard **s** to save the recording, or **e** to discard it.
 5. Press **1** to return home, then **2** to repeat.
 
 `NAMI_HOME_POS=None` skips home movement.

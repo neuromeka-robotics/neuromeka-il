@@ -11,8 +11,18 @@ from scipy.spatial.transform import Rotation
 
 from data_collector.teleop_adapter import TeleopAdapter
 from communication.robot import NamiRobot
+from helper.extra_utils import default_start_movement
 
 from data_collector.etc.pink_ik import PinkIK
+
+
+def start_nami_collection(controller, *, enable_compliance=False, stiffness=None):
+    """Enable compliance before teleop; the controller clears it when teleop ends."""
+    if enable_compliance:
+        for robot_id in controller.robot_ids:
+            controller.robot[robot_id].enable_compliance_mode(stiffness=stiffness)
+    default_start_movement(controller)
+    # Do not issue set_compliance_mode(False) on finish: that command has a firmware bug.
 
 
 DCP_ACTIVE_JOINT_NAMES = (

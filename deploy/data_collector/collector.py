@@ -120,6 +120,14 @@ class DataCollectionScheduler(Controller):
                 control_dat = self.robot[robot_id].get_state()
                 for k in self.config.data_to_collect["proprio"]:
                     buffer_data[f"{k}_{robot_id}"] = control_dat[k]
+            control_state_fields = [
+                k for k in self.config.data_to_collect.get("control", [])
+                if k not in ("tele_abs_control", "gripper_command")
+            ]
+            if control_state_fields:
+                control_state = self.robot[robot_id].get_control_state()
+                for k in control_state_fields:
+                    buffer_data[f"{k}_{robot_id}"] = control_state[k]
             if "gripper" in self.config.data_to_collect:
                 gripper_state = self.robot[robot_id].get_gripper_state()
                 if "gripper_position" in self.config.data_to_collect["gripper"]:
@@ -372,6 +380,8 @@ class TeleopDataCollector:
     def init_data_buffer(self):
         """
         "q", "qdot", "p", "pdot",   # robot state (T, D)
+        "qdes", "qdotdes", "qddotdes", "pdes", "pdotdes", "pddotdes",
+        "tau", "tau_act", "tau_ext", "tau_jts",  # IndyDCP control state (T, D)
         "gripper_position", "grasp_state",   # gripper state (T, G), G grippers per robot
         "images.rgb.{cam_name}", "images.depth.{cam_name}", "images.intrinsics.{cam_name}",  # rgb (T, H, W, C) [rgb], depth (T, H, W) [float32], intrinsics (3, 3) [float32]
         "tele_abs_control"   # robot control  (T, 6)

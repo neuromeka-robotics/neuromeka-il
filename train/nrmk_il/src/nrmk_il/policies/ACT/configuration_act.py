@@ -34,6 +34,9 @@ class ACTConfig:
     n_obs_steps: int = 1
     chunk_size: int = 20
     n_action_steps: int = 20
+    # None preserves the legacy concatenated state. Otherwise project each
+    # listed observation independently into one transformer token, in this order.
+    state_token_keys: list[str] | None = None
     
     input_shapes: dict[str, list[int]] = field(
         default_factory=lambda: {
@@ -97,6 +100,17 @@ class ACTConfig:
 
     def __post_init__(self):
         """Input validation (not exhaustive)."""
+        if self.chunk_size < 1 or self.n_action_steps < 1:
+            raise ValueError("chunk_size and n_action_steps must be positive")
+        if self.state_token_keys is not None:
+            state_keys = {k for k in self.input_shapes
+                          if k.startswith("observation.") and not k.startswith("observation.images.")}
+            if (not self.state_token_keys or len(set(self.state_token_keys)) != len(self.state_token_keys)
+                    or set(self.state_token_keys) != state_keys):
+                raise ValueError("state_token_keys must list every non-image observation exactly once")
+            if any(len(self.input_shapes[k]) != 1 or self.input_shapes[k][0] < 1
+                   for k in self.state_token_keys):
+                raise ValueError("Each state token must have a positive one-dimensional feature shape")
         if not self.vision_backbone.startswith("resnet"):
             raise ValueError(
                 f"`vision_backbone` must be one of the ResNet variants. Got {self.vision_backbone}."
@@ -160,8 +174,9 @@ class ACTConfig:
         # All images should be resized to same size
         default_img_shape = None
         for name, input_shape in self.input_shapes.items():
-            if name.startswith("observation.images."):
-                current_img_shape = input_shape[-2:]
+            if not name.startswith("observation.images."):
+                continue
+            current_img_shape = input_shape[-2:]
             
             if default_img_shape is None:
                 default_img_shape = current_img_shape

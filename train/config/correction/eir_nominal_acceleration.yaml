@@ -1,0 +1,47 @@
+# Position-matching label: command_delta_acc = command_delta_q / physics_dt**2.
+# One acceleration residual becomes temporary dt**2 * delta_acc and dt * delta_acc command offsets.
+# Nominal virtual state integrates only PD; neural command offsets never feed back.
+policy:
+  chunk_size: 2
+  control_mode: nominal_acceleration_command
+  dim_feedforward: 512
+  dim_model: 128
+  dropout: 0.1
+  input_normalization_modes: {}
+  input_shapes:
+    observation.nominal_q:
+    - 14
+    observation.nominal_v:
+    - 14
+    observation.nominal_teleop_error:
+    - 14
+  n_action_steps: 1
+  n_decoder_layers: 1
+  n_encoder_layers: 2
+  n_heads: 4
+  n_obs_steps: 1
+  output_normalization_modes: {}
+  output_shapes:
+    action.command_delta_acc:
+    - 14
+  robot_mode: dual_robot
+  state_token_keys:
+  - observation.nominal_q
+  - observation.nominal_v
+  - observation.nominal_teleop_error
+  temporal_ensemble_momentum: null
+  use_vae: false
+train:
+  batch_size: 256
+  epochs: 20000
+  grad_clip_norm: 1.0
+  lr: 0.0001
+  num_workers: 0
+  seed: 0
+  wandb:
+    enabled: false
+    entity: null
+    mode: online
+    name: null
+    project: eir-teleop-modeling
+  weight_decay: 0.0001

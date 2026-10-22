@@ -89,6 +89,7 @@ class ACTPolicy(nn.Module):
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
             self._success_prob = None
 
+    @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
 
@@ -97,6 +98,7 @@ class ACTPolicy(nn.Module):
         queue is empty.
         """
         self.eval()
+        batch = dict(batch)
 
         batch = self.normalize_inputs(batch)
         if len(self.expected_image_keys) > 0:
@@ -105,7 +107,8 @@ class ACTPolicy(nn.Module):
             batch["observation.images.depth"] = torch.stack([batch[k] for k in self.expected_depth_keys], dim=-4)
             if batch["observation.images.depth"].shape[-3] == 1:
                 batch["observation.images.depth"] = torch.repeat_interleave(batch["observation.images.depth"], repeats=3, dim=-3)
-        cat_batch_state(batch)  # inplace operation
+        if self.config.state_token_keys is None:
+            cat_batch_state(batch)  # legacy concatenated state
 
         # If we are doing temporal ensembling, keep track of the exponential moving average (EMA), and return
         # the first action.
@@ -141,7 +144,14 @@ class ACTPolicy(nn.Module):
                 actions[:, :, :3 * self.config.num_robots] \
                     = self.unnormalize_outputs({key["pos"]: actions[:, :, :3 * self.config.num_robots]})[key["pos"]]
             else:
-                actions = self.unnormalize_outputs({"action": actions})["action"]
+                offset = 0
+                parts = {}
+                for key, shape in self.config.output_shapes.items():
+                    if key.startswith("action."):
+                        parts[key] = actions[:, :, offset:offset + shape[0]]
+                        offset += shape[0]
+                parts = self.unnormalize_outputs(parts)
+                actions = torch.cat(list(parts.values()), dim=-1)
 
             # `self.model.forward` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
             # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
@@ -150,8 +160,8 @@ class ACTPolicy(nn.Module):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         """Run the batch through the model and compute the loss for training or validation."""
-        # Normalize and concat observation
-        batch = self.normalize_inputs(batch)
+        # Keep the caller's per-key batch intact.
+        batch = self.normalize_inputs(dict(batch))
         if len(self.expected_image_keys) > 0:
             batch["observation.images.rgb"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         if len(self.expected_depth_keys) > 0:
@@ -160,8 +170,13 @@ class ACTPolicy(nn.Module):
                 batch["observation.images.depth"] = torch.repeat_interleave(batch["observation.images.depth"], repeats=3, dim=-3)
         
         batch = self.normalize_targets(batch)
-        cat_batch_state(batch)
-        cat_batch_action(batch)
+        if self.config.state_token_keys is None:
+            cat_batch_state(batch)
+        if self.config.state_token_keys is not None:
+            batch["action"] = torch.cat([batch[key] for key in self.config.output_shapes
+                                         if key.startswith("action.")], dim=-1)
+        else:
+            cat_batch_action(batch)
         
         # forward
         output, (mu_hat, log_sigma_x2_hat) = self.model(batch)
@@ -182,7 +197,15 @@ class ACTPolicy(nn.Module):
         # l1_loss = (
         #     F.l1_loss(actions_hat, batch["action"], reduction="none") * ~batch["is_pad"].unsqueeze(-1)
         # ).mean()
-        l1_loss = F.l1_loss(actions_hat, batch["action"], reduction="mean")
+        if self.config.control_mode in (ControlMode.ACCELERATION_CORRECTION, ControlMode.POSITION_CORRECTION,
+                                        ControlMode.POSITION_VELOCITY_CORRECTION, ControlMode.DIRECT_COMMAND,
+                                        ControlMode.NOMINAL_COMMAND, ControlMode.NOMINAL_ACCELERATION_COMMAND):
+            valid = ~batch["is_pad"].unsqueeze(-1)
+            errors = F.l1_loss(actions_hat, batch["action"], reduction="none")
+            l1_loss = errors.masked_fill(~valid, 0.).sum() / (
+                valid.sum().clamp_min(1) * actions_hat.shape[-1])
+        else:
+            l1_loss = F.l1_loss(actions_hat, batch["action"], reduction="mean")
 
         loss_dict = {"l1_loss": l1_loss.item(), "loss": l1_loss}
         if self.config.use_vae:
@@ -260,6 +283,12 @@ class ACT(nn.Module):
             input_state_shape = sum(v[0] for k, v in config.input_shapes.items() \
                                     if "observation" in k and "image" not in k)
         self.use_input_state = input_state_shape > 0
+        self.state_token_keys = config.state_token_keys
+        self.num_state_tokens = (len(self.state_token_keys) if self.state_token_keys is not None
+                                 else int(self.use_input_state))
+        # Preserve legacy checkpoints; state-only deterministic ACT has exactly
+        # the requested state tokens, without an unused constant latent token.
+        self.use_latent_token = config.use_vae or self.state_token_keys is None
         # print(f'input_shape: {input_state_shape}')
         
         self.use_image = False
@@ -269,13 +298,19 @@ class ACT(nn.Module):
                 self.use_image = True
             if not self.use_depth and k.startswith("observation.images.depth"):
                 self.use_depth = True 
-        assert self.use_image or self.use_depth, "Either image or depth must be used."
+        if not (self.use_image or self.use_depth or self.use_input_state):
+            raise ValueError("ACT requires at least one state or image observation")
 
         if self.config.use_vae:
             self.vae_encoder = ACTEncoder(config)
             self.vae_encoder_cls_embed = nn.Embedding(1, config.dim_model)
             # Projection layer for joint-space configuration to hidden dimension.
-            if self.use_input_state:
+            if self.state_token_keys is not None:
+                self.vae_state_input_projs = nn.ModuleList([
+                    nn.Linear(config.input_shapes[key][0], config.dim_model)
+                    for key in self.state_token_keys
+                ])
+            elif self.use_input_state:
                 self.vae_encoder_robot_state_input_proj = nn.Linear(
                     input_state_shape, config.dim_model
                 )
@@ -287,9 +322,7 @@ class ACT(nn.Module):
             self.vae_encoder_latent_output_proj = nn.Linear(config.dim_model, config.latent_dim * 2)
             # Fixed sinusoidal positional embedding for the input to the VAE encoder. Unsqueeze for batch
             # dimension.
-            num_input_token_encoder = 1 + config.chunk_size
-            if self.use_input_state:
-                num_input_token_encoder += 1
+            num_input_token_encoder = 1 + config.chunk_size + self.num_state_tokens
             self.register_buffer(
                 "vae_encoder_pos_enc",
                 create_sinusoidal_pos_embedding(num_input_token_encoder, config.dim_model).unsqueeze(0),
@@ -322,7 +355,12 @@ class ACT(nn.Module):
 
         # Transformer encoder input projections. The tokens will be structured like
         # [latent, robot_state, image_feature_map_pixels].
-        if self.use_input_state:
+        if self.state_token_keys is not None:
+            self.encoder_state_input_projs = nn.ModuleList([
+                nn.Linear(config.input_shapes[key][0], config.dim_model)
+                for key in self.state_token_keys
+            ])
+        elif self.use_input_state:
             self.encoder_robot_state_input_proj = nn.Linear(
                 input_state_shape, config.dim_model
             )
@@ -337,7 +375,7 @@ class ACT(nn.Module):
                 depth_feat_dim, config.dim_model, kernel_size=1
             )
         # Transformer encoder positional embeddings.
-        num_input_token_decoder = 2 if self.use_input_state else 1
+        num_input_token_decoder = self.num_state_tokens + int(self.use_latent_token)
         self.encoder_robot_and_latent_pos_embed = nn.Embedding(num_input_token_decoder, config.dim_model)
         self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
@@ -390,9 +428,12 @@ class ACT(nn.Module):
         if self.use_image:
             batch_size = batch["observation.images.rgb"].shape[0]
             device = batch["observation.images.rgb"].device
-        else:
+        elif self.use_depth:
             batch_size = batch["observation.images.depth"].shape[0]
             device = batch["observation.images.depth"].device
+        else:
+            state = batch[self.state_token_keys[0] if self.state_token_keys else "observation.state"]
+            batch_size, device = state.shape[0], state.device
 
         # Prepare the latent for input to the transformer encoder.
         if self.config.use_vae and "action" in batch:
@@ -400,7 +441,12 @@ class ACT(nn.Module):
             cls_embed = einops.repeat(
                 self.vae_encoder_cls_embed.weight, "1 d -> b 1 d", b=batch_size
             )  # (B, 1, D)
-            if self.use_input_state:
+            if self.state_token_keys is not None:
+                robot_state_embed = torch.stack([
+                    projection(batch[key]) for key, projection
+                    in zip(self.state_token_keys, self.vae_state_input_projs)
+                ], dim=1)  # (B, number of state keys, D)
+            elif self.use_input_state:
                 robot_state_embed = self.vae_encoder_robot_state_input_proj(batch["observation.state"])
                 robot_state_embed = robot_state_embed.unsqueeze(1)  # (B, 1, D)
             
@@ -430,7 +476,7 @@ class ACT(nn.Module):
             # sequence depending whether we use the input states or not (cls and robot state)
             # False means not a padding token.
             cls_joint_is_pad = torch.full(
-                (batch_size, 2 if self.use_input_state else 1),
+                (batch_size, 1 + self.num_state_tokens),
                 False,
                 device=device,
             )
@@ -481,30 +527,25 @@ class ACT(nn.Module):
                 all_cam_features.append(cam_features)
                 all_cam_pos_embeds.append(cam_pos_embed)
 
-        # Concatenate camera observation feature maps and positional embeddings along the width dimension.
-        encoder_in = torch.cat(all_cam_features, axis=-1)
-        cam_pos_embed = torch.cat(all_cam_pos_embeds, axis=-1)
-
-        # Get positional embeddings for robot state and latent.
-        if self.use_input_state:
-            robot_state_embed = self.encoder_robot_state_input_proj(batch["observation.state"])  # (B, C)
-        latent_embed = self.encoder_latent_input_proj(latent_sample)  # (B, C)
-
-        # Stack encoder input and positional embeddings moving to (S, B, C).
-        encoder_in_feats = [latent_embed, robot_state_embed] if self.use_input_state else [latent_embed]
-        encoder_in = torch.cat(
-            [
-                torch.stack(encoder_in_feats, axis=0),
-                einops.rearrange(encoder_in, "b c h w -> (h w) b c"),
-            ]
-        )
-        pos_embed = torch.cat(
-            [
-                self.encoder_robot_and_latent_pos_embed.weight.unsqueeze(1),
-                cam_pos_embed.flatten(2).permute(2, 0, 1),
-            ],
-            axis=0,
-        )
+        # One token per configured state key. Each has its own projection and
+        # learned positional/type embedding; camera tokens remain optional.
+        state_features = []
+        if self.use_latent_token:
+            state_features.append(self.encoder_latent_input_proj(latent_sample))
+        if self.state_token_keys is not None:
+            state_features.extend(projection(batch[key]) for key, projection
+                                  in zip(self.state_token_keys, self.encoder_state_input_projs))
+        elif self.use_input_state:
+            state_features.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
+        feature_parts = [torch.stack(state_features, dim=0)]
+        position_parts = [self.encoder_robot_and_latent_pos_embed.weight.unsqueeze(1)]
+        if all_cam_features:
+            camera_features = torch.cat(all_cam_features, dim=-1)
+            camera_positions = torch.cat(all_cam_pos_embeds, dim=-1)
+            feature_parts.append(einops.rearrange(camera_features, "b c h w -> (h w) b c"))
+            position_parts.append(camera_positions.flatten(2).permute(2, 0, 1))
+        encoder_in = torch.cat(feature_parts, dim=0)
+        pos_embed = torch.cat(position_parts, dim=0)
 
         # Forward pass through the transformer modules.
         encoder_out = self.encoder(encoder_in, pos_embed=pos_embed)

@@ -47,6 +47,12 @@ class RobotMode(Enum):
 class ControlMode(Enum):
     TASK_SPACE = 1
     RELATIVE_DELTA_TASK_SPACE = 2
+    ACCELERATION_CORRECTION = 3
+    POSITION_CORRECTION = 4
+    POSITION_VELOCITY_CORRECTION = 5
+    DIRECT_COMMAND = 6
+    NOMINAL_COMMAND = 7
+    NOMINAL_ACCELERATION_COMMAND = 8
     
     @staticmethod
     def name_to_mode(name: str):
@@ -54,6 +60,18 @@ class ControlMode(Enum):
             return ControlMode.TASK_SPACE
         elif name == "relative_delta_task_space":
             return ControlMode.RELATIVE_DELTA_TASK_SPACE
+        elif name == "acceleration_correction":
+            return ControlMode.ACCELERATION_CORRECTION
+        elif name == "position_correction":
+            return ControlMode.POSITION_CORRECTION
+        elif name == "position_velocity_correction":
+            return ControlMode.POSITION_VELOCITY_CORRECTION
+        elif name == "nominal_acceleration_command":
+            return ControlMode.NOMINAL_ACCELERATION_COMMAND
+        elif name == "nominal_command":
+            return ControlMode.NOMINAL_COMMAND
+        elif name == "direct_command":
+            return ControlMode.DIRECT_COMMAND
         else:
             raise ValueError(f"Unavailable control mode: {name}")
     
@@ -63,6 +81,18 @@ class ControlMode(Enum):
             return "task_space"
         elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
             return "relative_delta_task_space"
+        elif mode == ControlMode.ACCELERATION_CORRECTION:
+            return "acceleration_correction"
+        elif mode == ControlMode.POSITION_CORRECTION:
+            return "position_correction"
+        elif mode == ControlMode.POSITION_VELOCITY_CORRECTION:
+            return "position_velocity_correction"
+        elif mode == ControlMode.NOMINAL_ACCELERATION_COMMAND:
+            return "nominal_acceleration_command"
+        elif mode == ControlMode.NOMINAL_COMMAND:
+            return "nominal_command"
+        elif mode == ControlMode.DIRECT_COMMAND:
+            return "direct_command"
         else:
             raise ValueError(f"Unavailable control mode: {mode}")
         

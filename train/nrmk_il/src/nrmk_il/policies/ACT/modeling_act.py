@@ -83,11 +83,33 @@ class ACTPolicy(nn.Module):
 
     def reset(self):
         """This should be called whenever the environment is reset."""
+        self._observation_history = {
+            key: deque(maxlen=self.config.n_obs_steps)
+            for key in (self.config.state_token_keys or []) if self.config.n_obs_steps > 1
+        }
         if self.config.temporal_ensemble_momentum is not None:
             self._ensembled_actions = None
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
             self._success_prob = None
+
+    def _update_observation_history(self, batch):
+        """Buffer every tick, even when an action chunk is still being consumed."""
+        for key, history in self._observation_history.items():
+            value = batch[key]
+            if value.ndim != 2 or value.shape[-1] != self.config.input_shapes[key][0]:
+                raise ValueError(f"select_action expects current {key} [batch, features], got {tuple(value.shape)}")
+            if history and (value.shape != history[-1].shape or value.device != history[-1].device):
+                raise ValueError("Observation batch changed; reset the policy before a new rollout")
+        for key, history in self._observation_history.items():
+            # Snapshot because the caller can integrate its state in place.
+            value = batch[key].detach().clone()
+            if not history:
+                history.extend([value] * self.config.n_obs_steps)
+            else:
+                history.append(value)
+            batch[key] = torch.stack(list(history), dim=1)  # [B, H, features]
+        return batch
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -101,6 +123,7 @@ class ACTPolicy(nn.Module):
         batch = dict(batch)
 
         batch = self.normalize_inputs(batch)
+        batch = self._update_observation_history(batch)
         if len(self.expected_image_keys) > 0:
             batch["observation.images.rgb"] = torch.stack([batch[k] for k in self.expected_image_keys], dim=-4)
         if len(self.expected_depth_keys) > 0:
@@ -197,9 +220,7 @@ class ACTPolicy(nn.Module):
         # l1_loss = (
         #     F.l1_loss(actions_hat, batch["action"], reduction="none") * ~batch["is_pad"].unsqueeze(-1)
         # ).mean()
-        if self.config.control_mode in (ControlMode.ACCELERATION_CORRECTION, ControlMode.POSITION_CORRECTION,
-                                        ControlMode.POSITION_VELOCITY_CORRECTION, ControlMode.DIRECT_COMMAND,
-                                        ControlMode.NOMINAL_COMMAND, ControlMode.NOMINAL_ACCELERATION_COMMAND):
+        if self.config.control_mode == ControlMode.NOMINAL_COMMAND:
             valid = ~batch["is_pad"].unsqueeze(-1)
             errors = F.l1_loss(actions_hat, batch["action"], reduction="none")
             l1_loss = errors.masked_fill(~valid, 0.).sum() / (
@@ -284,7 +305,7 @@ class ACT(nn.Module):
                                     if "observation" in k and "image" not in k)
         self.use_input_state = input_state_shape > 0
         self.state_token_keys = config.state_token_keys
-        self.num_state_tokens = (len(self.state_token_keys) if self.state_token_keys is not None
+        self.num_state_tokens = (len(self.state_token_keys) * config.n_obs_steps if self.state_token_keys is not None
                                  else int(self.use_input_state))
         # Preserve legacy checkpoints; state-only deterministic ACT has exactly
         # the requested state tokens, without an unused constant latent token.
@@ -375,8 +396,12 @@ class ACT(nn.Module):
                 depth_feat_dim, config.dim_model, kernel_size=1
             )
         # Transformer encoder positional embeddings.
-        num_input_token_decoder = self.num_state_tokens + int(self.use_latent_token)
+        num_input_token_decoder = (len(self.state_token_keys) if self.state_token_keys is not None
+                                   else int(self.use_input_state)) + int(self.use_latent_token)
         self.encoder_robot_and_latent_pos_embed = nn.Embedding(num_input_token_decoder, config.dim_model)
+        # Keep n_obs_steps=1 state dictionaries identical to existing checkpoints.
+        if config.n_obs_steps > 1:
+            self.encoder_time_pos_embed = nn.Embedding(config.n_obs_steps, config.dim_model)
         self.encoder_cam_feat_pos_embed = ACTSinusoidalPositionEmbedding2d(config.dim_model // 2)
 
         # Transformer decoder.
@@ -532,13 +557,26 @@ class ACT(nn.Module):
         state_features = []
         if self.use_latent_token:
             state_features.append(self.encoder_latent_input_proj(latent_sample))
-        if self.state_token_keys is not None:
+        if self.state_token_keys is not None and self.config.n_obs_steps > 1:
+            for key in self.state_token_keys:
+                expected = (batch_size, self.config.n_obs_steps, self.config.input_shapes[key][0])
+                if tuple(batch[key].shape) != expected:
+                    raise ValueError(f"{key}: expected history shape {expected}, got {tuple(batch[key].shape)}")
+            # Time-major tokens: q/v/error at oldest tick, then the next tick, ...
+            features = torch.stack([projection(batch[key]) for key, projection
+                                    in zip(self.state_token_keys, self.encoder_state_input_projs)], dim=2)
+            feature_parts = [features.flatten(1, 2).transpose(0, 1)]  # [H*K, B, D]
+            positions = (self.encoder_time_pos_embed.weight[:, None, :]
+                         + self.encoder_robot_and_latent_pos_embed.weight[None, :, :])
+            position_parts = [positions.flatten(0, 1).unsqueeze(1)]
+        elif self.state_token_keys is not None:
             state_features.extend(projection(batch[key]) for key, projection
                                   in zip(self.state_token_keys, self.encoder_state_input_projs))
         elif self.use_input_state:
             state_features.append(self.encoder_robot_state_input_proj(batch["observation.state"]))
-        feature_parts = [torch.stack(state_features, dim=0)]
-        position_parts = [self.encoder_robot_and_latent_pos_embed.weight.unsqueeze(1)]
+        if self.config.n_obs_steps == 1:
+            feature_parts = [torch.stack(state_features, dim=0)]
+            position_parts = [self.encoder_robot_and_latent_pos_embed.weight.unsqueeze(1)]
         if all_cam_features:
             camera_features = torch.cat(all_cam_features, dim=-1)
             camera_positions = torch.cat(all_cam_pos_embeds, dim=-1)

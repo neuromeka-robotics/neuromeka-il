@@ -31,7 +31,7 @@ class ACTConfig:
     num_robots: int | None = None
 
     # Input / output structure.
-    n_obs_steps: int = 1
+    n_obs_steps: int = 1  # Past samples including the current tick, oldest first.
     chunk_size: int = 20
     n_action_steps: int = 20
     # None preserves the legacy concatenated state. Otherwise project each
@@ -125,9 +125,14 @@ class ACTConfig:
                 f"The chunk size is the upper bound for the number of action steps per model invocation. Got "
                 f"{self.n_action_steps} for `n_action_steps` and {self.chunk_size} for `chunk_size`."
             )
-        if self.n_obs_steps != 1:
+        if type(self.n_obs_steps) is not int or self.n_obs_steps < 1:
+            raise ValueError("n_obs_steps must be a positive integer")
+        if self.n_obs_steps > 1 and (
+            self.state_token_keys is None or self.use_vae
+            or any(k.startswith("observation.images.") for k in self.input_shapes)
+        ):
             raise ValueError(
-                f"Multiple observation steps not handled yet. Got `nobs_steps={self.n_obs_steps}`"
+                "Observation history requires state_token_keys, use_vae: false, and no images"
             )
 
         assert isinstance(self.robot_mode, str), "Robot mode should be initially defined in string"

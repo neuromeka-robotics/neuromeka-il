@@ -1,6 +1,12 @@
 # Pre-step nominal q/v inputs; command residuals added after nominal integration.
-# Labels: reference_q/v[k] - nominal_q/v[k+1], applied at timestamp k.
+# Labels: reference_q/v[k+1] - nominal_q/v[k+1].
+# Apply the predicted endpoint command immediately during physics step k.
 # Neural commands never feed back into the nominal virtual PD state.
+# Raw-data generation/preprocessing settings live in eir_data.yaml.
+# Relative paths below resolve from this YAML's directory; ~ is expanded.
+# Generate and preprocess next_step_immediate labels before training.
+data:
+  processed_dir: ~/Desktop/pace_eir_data/joint_task_nominal/processed/teleop_common
 policy:
   chunk_size: 2
   control_mode: nominal_command
@@ -19,7 +25,7 @@ policy:
   n_decoder_layers: 1
   n_encoder_layers: 2
   n_heads: 4
-  n_obs_steps: 1
+  n_obs_steps: 11  # Current tick + 10 past ticks; 50 ms history at physics_dt=0.005.
   output_normalization_modes: {}
   output_shapes:
     action.command_delta_q:
@@ -34,6 +40,9 @@ policy:
   temporal_ensemble_momentum: null
   use_vae: false
 train:
+  output_dir: ~/Desktop/pace_eir_data/joint_task_nominal/weights
+  run_name: eir_nominal_joint_task_run
+  device: cuda:0
   batch_size: 256
   epochs: 20000
   grad_clip_norm: 1.0
@@ -41,7 +50,7 @@ train:
   num_workers: 0
   seed: 0
   wandb:
-    enabled: false
+    enabled: true
     entity: null
     mode: online
     name: null

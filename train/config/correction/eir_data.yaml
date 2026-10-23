@@ -1,0 +1,17 @@
+# Used only by generate/preprocess, independently of the training/model config.
+# Sources are relative to root; labels_dir/processed_dir are relative to work_dir.
+# To regenerate, choose a NEW work_dir; existing outputs are never overwritten.
+# Then point eir_nominal_command.yaml data.processed_dir at the resulting dataset.
+data:
+  root: ~/Desktop/pace_eir_data
+  work_dir: joint_task_nominal
+  joint_dir: data/nami_joint_abs
+  task_files:
+  - data/nami_task_abs/0.h5
+  - data/nami_task_abs/1.h5
+  pace_dir: ~/pace-sim2real
+  robot_config: genesis_bridge/configs/eir_train.yaml
+  labels_dir: labels/teleop_common
+  processed_dir: processed/teleop_common
+  validation_fraction: 0.0  # Match teleop_common: all episodes used for training.
+  seed: 0

@@ -69,34 +69,44 @@ if __name__ == "__main__":
     p = Process(target=process_input, args=(event_queue,))
     p.start()
 
-    while True:
-        k = event_queue.get()
-        if k == '1':
-            print("Moving to first task home")
-            nn_controller.exec_home_movement(wait=False)
-        elif k == '2':
-            print("Executing first task")
-            nn_controller.exec_nn_control(duration=1200.)
-        elif k == '3':
-            if data_collection_scheduler is not None:
-                print("Executing start state dagger")
-                # Stop nn controller
-                nn_controller.exec_nn_control_stop()
-                
-                # Start data collection from home pos
-                data_collection_scheduler.exec_collection(mode="start")
-        elif k == '4':
-            if data_collection_scheduler is not None:
-                print("Executing current state dagger")
-                # Stop nn controller
-                nn_controller.exec_nn_control_stop()
-                
-                # Start data collection from current pos
-                data_collection_scheduler.exec_collection(mode="current")
-        elif k == '0':
-            print("Stopping execution")
-            nn_controller.exec_nn_control_stop()
-        elif k == 'q':
-            break
+    try:
+        while True:
+            k = event_queue.get()
+            if k == '1':
+                print("Moving to first task home")
+                nn_controller.exec_home_movement(wait=False)
+            elif k == '2':
+                print("Executing first task")
+                nn_controller.exec_nn_control(duration=1200.)
+            elif k == '3':
+                if data_collection_scheduler is not None:
+                    print("Executing start state dagger")
+                    # Stop nn controller
+                    nn_controller.exec_nn_control_stop()
 
-    p.join()
+                    # Start data collection from home pos
+                    data_collection_scheduler.exec_collection(mode="start")
+            elif k == '4':
+                if data_collection_scheduler is not None:
+                    print("Executing current state dagger")
+                    # Stop nn controller
+                    nn_controller.exec_nn_control_stop()
+
+                    # Start data collection from current pos
+                    data_collection_scheduler.exec_collection(mode="current")
+            elif k == '0':
+                print("Stopping execution")
+                nn_controller.exec_nn_control_stop()
+            elif k == 'q':
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            nn_controller.exec_nn_control_stop()
+            if hasattr(nn_controller, "close"):
+                nn_controller.close()
+        finally:
+            if p.is_alive():
+                p.terminate()
+            p.join()

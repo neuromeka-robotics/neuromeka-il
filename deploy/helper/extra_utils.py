@@ -58,6 +58,16 @@ def default_start_movement(self, control_mode=None, **kwargs):
     for robot_id in self.robot_ids:
         self.set_teleop(robot_id, mode=control_mode)
 
+
+def start_movement_with_joint_locks(self, **kwargs):
+    """Apply configured Nami joint locks before entering teleoperation."""
+    for robot_id in self.robot_ids:
+        indices = self.robot_config.robot_params[robot_id]["locked_joint_indices"]
+        self.robot[robot_id].set_locked_joints(indices)
+        print(f"Robot {robot_id}: applied joint-lock commands for {list(indices)} (zero-based)")
+    default_start_movement(self, **kwargs)
+
+
 def default_finish_movement(self, **kwargs):
     for robot_id in self.robot_ids:
         self.set_idle(robot_id)

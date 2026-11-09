@@ -243,23 +243,26 @@ class NamiTeleop:
 
 
 class NamiTeleopAdapter(TeleopAdapter):
-    """Route selected Vive controllers to one whole-body Nami connection."""
+    """Route VIVE controllers or one SpaceMouse to a whole-body Nami connection."""
 
     @staticmethod
     def validate_config(collector_config):
         params = collector_config.robot_config.robot_params
         if len(params) != 1:
             raise ValueError("Nami teleoperation requires exactly one robot instance in robot_params")
-        if collector_config.task_config.data_config.device_type != "vive":
-            raise ValueError("Nami teleoperation requires Vive devices")
+        device_type = collector_config.task_config.data_config.device_type
+        if device_type not in ("vive", "spacemouse"):
+            raise ValueError("Nami teleoperation requires VIVE or SpaceMouse")
         if not {"q", "p"}.issubset(collector_config.data_to_collect.get("proprio", [])):
             raise ValueError("Nami collection requires q and p proprioception")
         robot_params = next(iter(params.values()))
         grippers = NamiRobot.get_gripper_configs(robot_params.get("gripper"), robot_params["ip"])
         factory_kwargs = getattr(collector_config.teleop_adapter_factory, "keywords", {})
         teleop_config = factory_kwargs.get("teleop_config")
+        if device_type == "spacemouse" and (teleop_config is None or len(teleop_config.arm_indices) != 1):
+            raise ValueError("One SpaceMouse must control exactly one Nami task chain")
         if teleop_config is not None and set(grippers) - set(teleop_config.arm_indices):
-            raise ValueError("Each enabled Nami gripper requires its arm's Vive device")
+            raise ValueError("Each enabled Nami gripper requires its arm's teleoperation device")
 
     def __init__(self, collector_config, *, teleop_config: NamiTeleopConfig):
         super().__init__(collector_config)

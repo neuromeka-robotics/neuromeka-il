@@ -119,13 +119,13 @@ class RealsenseCamHandler:
         self._thread.start()
         
     def stop(self):
-        print("stop called for camHandler")
         if self._thread is not None:
             self._thread_running = False
             self._thread.join()
             self._thread = None
 
-        del self.camera
+        if hasattr(self, "camera"):
+            del self.camera
         
     def _thread_callback(self):
         while self._thread_running:
@@ -138,11 +138,13 @@ class RealsenseCamHandler:
                 time.sleep(wait_time)
         
     def _update_measurement(self):
-        self.camera.update_data()
+        if not self.camera.update_data():
+            return
         self._cam_data_lock.acquire()
         self.data["rgb"] = self.camera.color_image.copy()
         self.data["depth"] = self.camera.depth_image.copy()
         self.data["intrinsics"] = self.camera.intrinsics.copy()
+        self.data["timestamp"] = time.monotonic()
         self._cam_data_lock.release()
         self._cam_updated = True
         
@@ -165,6 +167,7 @@ class RealsenseCamHandler:
             output["rgb"] = self.data["rgb"].copy()
             output["depth"] = self.data["depth"].copy()
             output["intrinsics"] = self.data["intrinsics"].copy()
+            output["timestamp"] = self.data["timestamp"]
             self._cam_data_lock.release()
             return output
         

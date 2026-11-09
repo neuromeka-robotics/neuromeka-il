@@ -1,4 +1,8 @@
 # Training
+
+For goal-first visual-servoing data, use `generate_mask.py` to manually label SAM2
+masks, then `preprocess_visual_servo.py` and the `config/visual_servo/syringe.yaml`
+ACT configuration. See the [complete workflow](../deploy/perception/README.md).
 The `train` directory contains the necessary code to train policies with imitation learning.
 
 ## Training configurations

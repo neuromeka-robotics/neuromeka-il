@@ -47,6 +47,7 @@ class RobotMode(Enum):
 class ControlMode(Enum):
     TASK_SPACE = 1
     RELATIVE_DELTA_TASK_SPACE = 2
+    VISUAL_SERVO = 3
     
     @staticmethod
     def name_to_mode(name: str):
@@ -54,6 +55,8 @@ class ControlMode(Enum):
             return ControlMode.TASK_SPACE
         elif name == "relative_delta_task_space":
             return ControlMode.RELATIVE_DELTA_TASK_SPACE
+        elif name == "visual_servo":
+            return ControlMode.VISUAL_SERVO
         else:
             raise ValueError(f"Unavailable control mode: {name}")
     
@@ -63,6 +66,8 @@ class ControlMode(Enum):
             return "task_space"
         elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
             return "relative_delta_task_space"
+        elif mode == ControlMode.VISUAL_SERVO:
+            return "visual_servo"
         else:
             raise ValueError(f"Unavailable control mode: {mode}")
         
@@ -72,13 +77,15 @@ class ControlMode(Enum):
             return {"pos": "action.end_pos", "ori": "action.end_ori"}
         elif mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
             return {"pos": "action.relative_delta.end_pos", "ori": "action.relative_delta.end_ori"}
+        elif mode == ControlMode.VISUAL_SERVO:
+            return {"pos": "action.visual_servoing.end_pos", "ori": "action.visual_servoing.end_ori"}
         else:
             raise ValueError(f"Unavailable control mode: {mode}")
     
     @staticmethod
     def get_candidate(name: str):
         if name == "task":
-            return [ControlMode.TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE]
+            return [ControlMode.TASK_SPACE, ControlMode.RELATIVE_DELTA_TASK_SPACE, ControlMode.VISUAL_SERVO]
         else:
             raise ValueError(f"Unavailable property: {name}")
         

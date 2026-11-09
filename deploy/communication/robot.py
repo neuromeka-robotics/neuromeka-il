@@ -282,6 +282,23 @@ class NamiRobot(Robot):
     JOINT_DOF = 22
     ARM_INDICES = (0, 1, 2)
 
+    def set_locked_joints(self, joint_indices):
+        """Apply zero-based physical joint indices, or clear all locks with [].
+
+        IndyDCP accepts one-based indices one at a time; 0 disables locking.
+        Always issue the configured commands. Do not infer accumulated locks
+        from get_locked_joint(), which reports a single selection on Nami.
+        """
+        indices = list(joint_indices)
+        if any(type(index) is not int or not 0 <= index < 18 for index in indices):
+            raise ValueError("Nami lock indices must be integers from 0 to 17 (no dummy joints)")
+        if len(set(indices)) != len(indices):
+            raise ValueError("Nami lock indices must not contain duplicates")
+        for sdk_index in [index + 1 for index in indices] or [0]:
+            response = self.robot_client.set_locked_joint(sdk_index)
+            if str(response["code"]) != "0":
+                raise RuntimeError(f"set_locked_joint({sdk_index}) failed: {response}")
+
     def get_control_state(self) -> Dict:
         """Read whole-body motion and torque signals from IndyDCP."""
         return self.robot_client.get_control_state()

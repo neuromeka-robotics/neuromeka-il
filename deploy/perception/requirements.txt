@@ -1,0 +1,4 @@
+# Install in the existing env_il; torch/torchvision are already supplied there.
+iopath>=0.1.10,<0.2
+gradio>=5,<6
+imageio-ffmpeg>=0.6,<0.7

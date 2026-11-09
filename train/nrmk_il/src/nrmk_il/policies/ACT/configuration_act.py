@@ -124,6 +124,8 @@ class ACTConfig:
 
         assert isinstance(self.control_mode, str), "Control mode should be initially defined in string"
         self.control_mode = ControlMode.name_to_mode(self.control_mode)
+        if self.control_mode == ControlMode.VISUAL_SERVO and (self.chunk_size != 1 or self.n_action_steps != 1):
+            raise ValueError("Visual servoing predicts one goal correction: chunk_size and n_action_steps must be 1")
         
         # Check all the image size are same
         # All images should be resized to same size

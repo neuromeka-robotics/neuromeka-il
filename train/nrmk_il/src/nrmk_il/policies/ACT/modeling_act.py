@@ -299,7 +299,7 @@ class ACT(nn.Module):
         if self.use_image:
             backbone_model = getattr(torchvision.models, config.vision_backbone)(
                 replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
-                weights="ResNet18_Weights.IMAGENET1K_V1",
+                weights=config.pretrained_backbone_weights,
                 norm_layer=FrozenBatchNorm2d,
             )
             self.img_backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})

@@ -3,7 +3,6 @@ from typing import Dict
 import numpy as np
 from scipy.spatial.transform import Rotation
 from multiprocessing.managers import SharedMemoryManager
-from third_party.spacemouse.spacemouse import Spacemouse
 
 from data_collector.device.base import BaseDevice
 from helper.math_utils import MathFunc, TaskControlTransformation
@@ -15,6 +14,10 @@ class SpaceMouse(BaseDevice):
     CONTROL_MODE = ROBOT_CONTROL_MODE.TELE_TASK_ABSOLUTE
     
     def __init__(self, **kwargs):
+        try:
+            from third_party.spacemouse.spacemouse import Spacemouse
+        except OSError as exc:
+            raise RuntimeError("Install libspnav-dev and spacenavd, then start spacenavd (see deploy/README.md)") from exc
         self.control_transform = TaskControlTransformation([0., 0., 0.])
         
         # Set device
@@ -25,15 +28,16 @@ class SpaceMouse(BaseDevice):
                 
         self.device = Spacemouse(shm_manager=self.shm_manager, **self.device_params["init_params"])
         self.device.__enter__()
+        self.reset()
         
     def exit(self):
         try:
-            self.device.__exit__()
+            self.device.__exit__(None, None, None)
         except:
             pass
         
         try:
-            self.shm_manager.__exit__()
+            self.shm_manager.__exit__(None, None, None)
         except:
             pass
     
@@ -52,11 +56,16 @@ class SpaceMouse(BaseDevice):
         MAX_ROT_SPEED = self.device_params["max_rot_speed"]
         control_dt = self.control_dt
         mousePose = self.device.get_motion_state_transformed()
-        dpos = mousePose[:3] * (1 + np.abs(mousePose[:3])) * (MAX_POS_SPEED * control_dt)
-        drot_xyz = mousePose[3:] * (1 + np.abs(mousePose[3:])) * (MAX_ROT_SPEED * control_dt)
+        if self.device_params.get("nonlinear_gain", True):
+            mousePose = mousePose * (1 + np.abs(mousePose))
+        dpos = mousePose[:3] * (MAX_POS_SPEED * control_dt)
+        drot_xyz = mousePose[3:] * (MAX_ROT_SPEED * control_dt)
         
         if self.device_params.get("fix"):
             ori_fix_config: Dict = self.device_params.get("fix")
+            for idx, axis in enumerate(("x", "y", "z")):
+                if ori_fix_config.get(axis):
+                    dpos[idx] = 0
             if ori_fix_config.get("roll"):
                 drot_xyz[0] = 0
             if ori_fix_config.get("pitch"):
@@ -77,7 +86,7 @@ class SpaceMouse(BaseDevice):
 
             self.control_transform.init_device.pos = self.control_transform.current_device.pos.copy()
             self.control_transform.init_device.rot = self.control_transform.current_device.rot.copy()
-            end_pose = np.array(kwargs["robot_pose"])
+            end_pose = np.array(kwargs["robot_pose"], dtype=float)
             end_pose[3:] *= np.pi / 180  # degree -> rad
             self.control_transform.init_robot_end.pos = end_pose[:3]
             self.control_transform.init_robot_end.rot = MathFunc.euler_to_rotMat(end_pose[3:][0], end_pose[3:][1], end_pose[3:][2])

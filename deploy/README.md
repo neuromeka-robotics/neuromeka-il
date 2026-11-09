@@ -1,5 +1,9 @@
 # Deployment
 
+For the DINOv2 + SAM2 two-process detector, Nami left-arm SpaceMouse xyz+yaw
+collection, and learned ACT visual servoing, follow the
+[visual-servoing workflow](perception/README.md).
+
 The `deploy` directory contains the necessary code to collect demonstration data and run the trained policy with real Neuromeka robots (e.g., [Indy7](https://en.neuromeka.com/indy)).
 
 ## Real-world configurations

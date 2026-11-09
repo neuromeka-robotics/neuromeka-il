@@ -5,3 +5,8 @@ box_lift_rl/
 logs/
 replay_bundle/
 .vscode/
+
+# Downloaded streaming SAM2 source and local perception/model weights.
+deploy/third_party/sam2/
+*.pt
+*.pth

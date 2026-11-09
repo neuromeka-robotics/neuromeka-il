@@ -1,0 +1,49 @@
+# Labels: inverse(current TCP pose) @ first recorded goal pose.
+base:
+  policy_class: act
+  task_name: syringe_visual_servo
+  seed: 0
+  num_workers: 4
+  logging: false
+
+train:
+  num_epochs: 3000
+  batch_size: 8
+  success_detector_batch_size: 8
+  lr: 1.0e-5
+  lr_backbone: 1.0e-5
+  weight_decay: 1.0e-4
+
+policy:
+  robot_mode: single_robot
+  control_mode: visual_servo
+  n_obs_steps: 1
+  chunk_size: 1
+  n_action_steps: 1
+  temporal_ensemble_momentum: null
+  input_shapes:
+    observation.images.rgb.wrist: [3, 224, 224]
+  output_shapes:
+    action.visual_servoing.end_pos: [3]
+    action.visual_servoing.end_ori: [6]
+  input_normalization_modes:
+    observation.images.rgb.wrist: mean_std
+  output_normalization_modes:
+    action.visual_servoing.end_pos: mean_std
+  vision_backbone: resnet18
+  pretrained_backbone_weights: ResNet18_Weights.IMAGENET1K_V1
+  replace_final_stride_with_dilation: false
+  pre_norm: false
+  dim_model: 512
+  n_heads: 8
+  dim_feedforward: 3200
+  feedforward_activation: relu
+  n_encoder_layers: 4
+  n_decoder_layers: 1
+  use_vae: false
+  latent_dim: 32
+  n_vae_encoder_layers: 4
+  dropout: 0.1
+  kl_weight: 10.0
+
+extra: {}

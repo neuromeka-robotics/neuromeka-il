@@ -4,7 +4,7 @@ from functools import partial
 from typing import Callable
 from helper.config_utils import *
 from helper.math_utils import clip_task_space_control
-from helper.extra_utils import home_movement_w_open_gripper
+from helper.extra_utils import home_movement_w_open_gripper, start_movement_with_joint_locks
 from data_collector.teleop_adapter import TeleopAdapter
 from data_collector.etc.nami_teleop import NamiTeleopAdapter, NamiTeleopConfig, start_nami_collection
 from communication.robot import NamiRobot
@@ -204,6 +204,39 @@ def make_nami_config(mode, gripper_config=None):
 
 CONFIGS["nami_task"] = make_nami_config("task_abs")
 CONFIGS["nami_joint"] = make_nami_config("joint_abs")
+
+
+def make_nami_visual_servo_config():
+    # Logical robot 0 owns the full Nami connection. Task chain 1 is its LEFT arm.
+    # Robot IP and camera serial are configured in visual_servo/config.py below.
+    from middle_level_controller.visual_servo.config import (
+        CUSTOM_ROBOT_CONFIG, CAMERA_CONFIG_VS, TASK_NAME as VS_TASK_NAME)
+    return DataCollectorConfig(
+        robot_config=CUSTOM_ROBOT_CONFIG,
+        task_config=TASK_CONFIG(
+            name=VS_TASK_NAME, camera_config=CAMERA_CONFIG_VS, model_config=None,
+            extra_config=EXTRA_CONFIG(start_movement_fn=start_movement_with_joint_locks),
+            data_config=DATA_CONFIG(device_type="spacemouse", device_params={
+                # Match ETC/nrmk_il's Mouse driver and config/data.py sensitivity.
+                "init_params": {"frequency": 20, "max_value": 100, "deadzone": 0.4},
+                "max_pos_speed": 0.05,  # m/s per normalized mouse unit
+                "max_rot_speed": 0.15,  # rad/s per normalized mouse unit
+                "nonlinear_gain": False,
+                "fix": {"roll": True, "pitch": True, "yaw": False},
+            }),
+        ),
+        data_to_collect={
+            "proprio": ["q", "qdot", "p", "pdot"],
+            "camera": {"wrist": ["rgb", "intrinsics"]},
+            "control": ["tele_abs_control"],
+        },
+        data_to_collect_once=["intrinsics"],
+        teleop_adapter_factory=partial(NamiTeleopAdapter, teleop_config=NamiTeleopConfig(
+            robot_control_mode="task_abs", arm_indices=(1,))),
+    )
+
+
+CONFIGS["nami_visual_servo"] = make_nami_visual_servo_config()
 
 
 def get_config(name):

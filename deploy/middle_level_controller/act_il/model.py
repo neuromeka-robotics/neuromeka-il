@@ -75,6 +75,8 @@ class NN_policy(Empty_NN_policy):
 
         # load policy
         if self.task_config.model_config.model_type == "act":
+            # The full policy checkpoint includes the backbone; deployment needs no download.
+            policy_config.pretrained_backbone_weights = None
             self.policy = ACTPolicy(policy_config, policy_stats)
         else:
             raise NotImplementedError
@@ -84,6 +86,7 @@ class NN_policy(Empty_NN_policy):
             torch.load(
                 policy_weight_path,
                 weights_only=True,
+                map_location=self.device,
             )
         )
         self.policy.to(self.device)
@@ -197,7 +200,7 @@ class NN_policy(Empty_NN_policy):
                 3 * self.n_robots + 9 * (robot_id + 1)
             ].reshape(3, 3)
 
-            if self.control_mode == ControlMode.RELATIVE_DELTA_TASK_SPACE:
+            if self.control_mode in (ControlMode.RELATIVE_DELTA_TASK_SPACE, ControlMode.VISUAL_SERVO):
                 pos_action = (self.init_relative_end_ori[robot_id] @ pos_action
                               + self.init_relative_end_pos[3 * robot_id:3 * (robot_id + 1)])
                 rot_action = self.init_relative_end_ori[robot_id] @ rot_action
